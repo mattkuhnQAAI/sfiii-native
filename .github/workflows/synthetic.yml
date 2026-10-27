@@ -42,13 +42,14 @@ jobs:
         shell: bash
         run: |
           cmake -S tools/tests -B "$RUNNER_TEMP/sfiii-checks" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime"
-          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed hd_assets hd_pack_index
+          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed runtime_tests overlay_state_regression slave_state_regression hd_assets hd_pack_index
       - name: Run required runtime regressions
         shell: bash
         run: |
-          for target in dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed; do
+          for target in dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed overlay_state_regression slave_state_regression; do
             "$RUNNER_TEMP/sfiii-checks/$target"
           done
           "$RUNNER_TEMP/sfiii-checks/hd_assets" "$RUNNER_TEMP/sfiii-hd-assets"
           "$RUNNER_TEMP/sfiii-checks/hd_pack_index" "$RUNNER_TEMP/sfiii-hd-index"
+          "$RUNNER_TEMP/sfiii-checks/upstream/runtime_tests"
       # Real disc inventories, generated game code and gameplay fixtures stay local.

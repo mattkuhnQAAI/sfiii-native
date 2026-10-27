@@ -71,5 +71,20 @@ class NativeContinuations(unittest.TestCase):
             self.assertIn(0x0600100C,m.entries)
             self.assertIn('void f_0600100C(SH2Context& c)',text)
 
+    def test_state_points_come_before_their_block_charge(self):
+        # A loaded state resumes at the label and runs what follows it, so a
+        # point after the block's SH2_CYC would charge that block twice and the
+        # loaded run would part from the run that saved it.
+        with tempfile.TemporaryDirectory() as tmp:
+            for code in (self.code, bytes.fromhex('e0027001affe7101000b0009')):
+                self.code=code
+                m,text=self.generate(Path(tmp),True)
+                lines=[l.strip() for l in text.splitlines()]
+                points=[i for i,l in enumerate(lines) if l.startswith('SH2_STATE_POINT(')]
+                self.assertTrue(points)
+                for i in points:
+                    self.assertFalse(lines[i-1].startswith('SH2_CYC('),lines[i-2:i+2])
+                    if lines[i-1].startswith('L_'):self.assertTrue(lines[i+1].startswith('SH2_CYC('),lines[i-1:i+2])
+
 
 if __name__=='__main__':unittest.main()
