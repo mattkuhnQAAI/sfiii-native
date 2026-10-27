@@ -116,6 +116,81 @@ TEST(rotation_coefficient_transparency_and_normal_background_priority) {
     CHECK_EQ(f.px[1], 0x0000F8);
 }
 
+namespace {
+// NBG0 (and NBG1) as 512x256 256-colour bitmaps at VRAM 0 (and 0x20000), zoom 1, a blue back screen
+void two_bitmaps() {
+    std::memset(g_vdp2_regs, 0, sizeof g_vdp2_regs);
+    std::memset(g_vdp2_vram, 0, sizeof g_vdp2_vram);
+    std::memset(g_vdp2_cram, 0, sizeof g_vdp2_cram);
+    reg16(0x00, 0x8000); reg16(0x20, 0x03); reg16(0x28, 0x1212); reg16(0x3C, 0x0010);
+    reg16(0x78, 1); reg16(0x7C, 1); reg16(0x88, 1); reg16(0x8C, 1);
+    reg16(0xF8, 0x0203);
+    reg16(0xAC, 3); mem_wr(g_vdp2_vram, 0x60000, 0x7C00, 2);
+    mem_wr(g_vdp2_cram, 2, 0x001F, 2); mem_wr(g_vdp2_cram, 4, 0x03E0, 2); mem_wr(g_vdp2_cram, 6, 0x7C00, 2);
+    std::memset(g_vdp2_vram, 1, 512 * 256);
+    std::memset(g_vdp2_vram + 0x20000, 2, 512 * 256);
+}
+}
+
+TEST(nbg_line_scroll_horizontal_vertical_and_zoom_tables) {
+    two_bitmaps();
+    reg16(0x20, 0x01);                     // NBG0 alone
+    g_vdp2_vram[2] = 3;                    // row 0, dot 2: blue (red elsewhere)
+    std::memset(g_vdp2_vram + 5 * 512, 2, 512); // row 5: green
+    reg16(0xA0, 2); reg16(0xA2, 0);        // LSTA0: VRAM 0x40000
+    Frame f;
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0xF80000u);
+    CHECK_EQ(f.px[2], 0x0000F8u);
+    reg16(0x9A, 0x02);                     // horizontal: line 0 scrolled 2 dots
+    vr32(0x40000, 2 << 16);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x0000F8u);
+    CHECK_EQ(f.px[(size_t)f.w], 0xF80000u); // line 1's entry is 0
+    reg16(0x9A, 0x04);                     // vertical: line 0 shows row 5
+    vr32(0x40000, 5 << 16); vr32(0x40004, 1 << 16);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x00F800u);
+    CHECK_EQ(f.px[(size_t)f.w + 2], 0xF80000u);
+    reg16(0x9A, 0x08);                     // zoom: line 0 steps 2 dots a dot
+    vr32(0x40000, 0x200 << 8); vr32(0x40004, 0x100 << 8);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[1], 0x0000F8u);
+    CHECK_EQ(f.px[2], 0xF80000u);
+    reg16(0x9A, 0x16);                     // horizontal and vertical, an entry pair every 2 lines
+    vr32(0x40000, 2 << 16); vr32(0x40004, 0); vr32(0x40008, 0); vr32(0x4000C, 5 << 16);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x0000F8u);
+    CHECK_EQ(f.px[(size_t)f.w], 0x0000F8u);
+    CHECK_EQ(f.px[(size_t)f.w * 2], 0x00F800u);
+}
+
+TEST(extended_colour_calculation_averages_the_second_and_third_images) {
+    two_bitmaps();
+    reg16(0x108, 0x0F0F);                  // ratio 15: half and half
+    reg16(0xEC, 0x0003);                   // NBG0 over NBG1, NBG1 over the back screen
+    Frame f;
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C7C00u);
+    reg16(0xEC, 0x0403);                   // extended: NBG1 is first averaged with the back screen
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C3E3Eu);
+    reg16(0xEC, 0x0401);                   // not when NBG1's own colour calculation is off
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C7C00u);
+    reg16(0x0E, 0x1000);                   // colour RAM mode 1: the back screen is RGB, so still averaged
+    reg16(0xEC, 0x0403);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C3E3Eu);
+    reg16(0x20, 0x0407); reg16(0xFA, 0x0001); // NBG2 third, its transparent dots drawn (colour RAM 0)
+    reg16(0xEC, 0x0403);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C7C00u);          // a colour RAM dot third: not averaged in modes 1 and 2
+    reg16(0x0E, 0x0000);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C3E00u);          // mode 0 averages it
+}
+
 TEST(vdp1_corner_coverage_does_not_count_one_end_code_twice) {
     vdp1_init();
     std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);

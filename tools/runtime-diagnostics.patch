@@ -60,7 +60,7 @@ index 566fcfd..d5bb5fc 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..08eaa4b 100644
+index cb6af72..84e443a 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,9 @@
@@ -73,7 +73,7 @@ index cb6af72..08eaa4b 100644
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -113,42 +115,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +115,111 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -81,6 +81,11 @@ index cb6af72..08eaa4b 100644
 +static const int kSlots = 64;
  static const SH2Module* g_active[kSlots];
 +static uint64_t g_active_heads[kSlots];
++// Bumped by every change to g_active or g_active_heads: a remembered lookup holds for one generation.
++static uint64_t g_active_gen = 1;
++struct LookupEntry { uint32_t addr = 0; uint8_t n = 0; uint8_t slots[2] = {}; uint64_t gen = 0; SH2Func fn = nullptr; };
++static LookupEntry g_lookup[8192];
++static inline uint32_t lookup_index(uint32_t addr) { return ((addr >> 1) ^ (addr >> 14)) & 8191u; }
 +static uint64_t module_head(const SH2Module* m) {
 +    uint8_t* p=m ? host(m->base):nullptr;
 +    if(!p) return 0;
@@ -114,9 +119,24 @@ index cb6af72..08eaa4b 100644
  int sh2_active_slots() { return kSlots; }
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
 -void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
-+void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
++// module_head memoised per slot: the same 64 header bytes give the same hash, so a lookup compares
++// the bytes (a few vector compares) and hashes only when they changed. Exactly module_head(m).
++static const SH2Module* g_head_mod[kSlots];
++static uint8_t g_head_bytes[kSlots][64];
++static uint64_t g_head_hash[kSlots];
++static uint64_t module_head_cached(int slot, const SH2Module* m) {
++    uint8_t* p=m ? host(m->base):nullptr;
++    if(!p) return 0;
++    size_t n=m->size<64 ? m->size:64;
++    if(g_head_mod[slot]==m && std::memcmp(p,g_head_bytes[slot],n)==0) return g_head_hash[slot];
++    uint64_t h=module_head(m);
++    std::memcpy(g_head_bytes[slot],p,n);g_head_mod[slot]=m;g_head_hash[slot]=h;
++    return h;
++}
++void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m);++g_active_gen; }
  
  void sh2_activate(const SH2Module* m) {
++    ++g_active_gen;
      for (auto& a : g_active)
          if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
 -    for (auto& a : g_active)
@@ -126,27 +146,59 @@ index cb6af72..08eaa4b 100644
      std::fprintf(stderr, "saturn-recomp: more than %d modules active\n", kSlots);
  }
  
++static SH2Func lookup_slow(uint32_t addr);
++
  SH2Func sh2_lookup(uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;           // code run cache-through
 -    for (const SH2Module* m : g_active) {
++    LookupEntry& e = g_lookup[lookup_index(addr)];
++    if (e.addr == addr && e.gen == g_active_gen) {
++        // The slots the scan passes that hold addr: their headers must still be the ones they
++        // were activated with, as lookup_slow checks; any change takes the slow path and its effects.
++        bool same = true;
++        for (int k = 0; k < e.n && same; ++k) {
++            const SH2Module* m = g_active[e.slots[k]];
++            if (m->callable_entry) same = module_head_cached(e.slots[k], m) == g_active_heads[e.slots[k]];
++        }
++        if (same) return e.fn;
++    }
++    uint64_t gen = g_active_gen;
++    SH2Func f = lookup_slow(addr);
++    if (!f || gen != g_active_gen) return f;
++    // Remember the result with every slot the scan met that holds addr (normally one).
++    uint8_t slots[2]; int n = 0;
++    for (int slot = 0; slot < kSlots; ++slot) {
++        const SH2Module* m = g_active[slot];
+         if (!m || addr - m->base >= m->size) continue;
++        if (n == 2) return f;                            // unusual overlap: not cached
++        slots[n++] = (uint8_t)slot;
++        if (has_entry(m, addr)) break;
++    }
++    e.addr = addr; e.gen = g_active_gen; e.fn = f; e.n = (uint8_t)n; e.slots[0] = slots[0]; e.slots[1] = n > 1 ? slots[1] : 0;
++    return f;
++}
++
++// The scan over the active slots in order; the first holding addr with an entry there gives it.
++static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
-         if (!m || addr - m->base >= m->size) continue;
++        if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
-+        uint64_t head=module_head(m);
++        uint64_t head=m->callable_entry ? module_head_cached(slot,m) : 0;
 +        if(m->callable_entry && head!=g_active_heads[slot]) {
 +            bool exact=false;
 +            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
++            ++g_active_gen;
 +            if(!exact) {g_active[slot]=nullptr;return nullptr;}
 +            g_active_heads[slot]=head;
-+            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return sh2_lookup(addr);}
++            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return lookup_slow(addr);}
 +        }
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +204,31 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +256,31 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
@@ -169,7 +221,7 @@ index cb6af72..08eaa4b 100644
 +            for (int slot=0;slot<kSlots;++slot) {
 +                const SH2Module* active=g_active[slot];
 +                if (active && active->base == addr && active->callable_entry && has_entry(active, addr)) {
-+                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;continue;}
++                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;++g_active_gen;continue;}
 +                    m = active;
 +                    break;
 +                }
@@ -2098,10 +2150,16 @@ index 91d606c..387ded9 100644
          if (n) raw(s.data(), n);
      }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..bee2cc3 100644
+index 8589d33..7c44204 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
-@@ -38,6 +38,7 @@
+@@ -33,11 +33,13 @@
+ #include "saturn.h"
+ #include "state.h"
+ #include "video.h"
++#include "vdp1_steps.h"
+ #include <algorithm>
+ #include <array>
  #include <climits>
  #include <cmath>
  #include <cstdlib>
@@ -2109,7 +2167,7 @@ index 8589d33..bee2cc3 100644
  #include <unordered_map>
  
  uint8_t g_vdp1_vram[0x80000];
-@@ -54,15 +55,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+@@ -54,15 +56,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
  static bool g_drawing;
  static uint64_t g_draw_end, g_frame_changes, g_draws;
  
@@ -2176,7 +2234,7 @@ index 8589d33..bee2cc3 100644
      g_reg[MODR] = 0x1000;                       // version 1
      g_reg[EDSR] = 0x0002;                       // the last draw has ended
  }
-@@ -94,6 +146,7 @@ struct Cmd {
+@@ -94,6 +147,7 @@ struct Cmd {
      uint16_t lut[16];
      Rgb g[4];                                   // A B C D
  };
@@ -2184,10 +2242,13 @@ index 8589d33..bee2cc3 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +189,65 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -135,13 +189,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+ }
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
- 
++static bool g_reference_raster;                 // tests: the general line walk alone
++void vdp1_reference_raster(bool on) { g_reference_raster = on; }
++
 +static void hd_quad(const Cmd& c,Pt a,Pt b,Pt cc,Pt d) {
 +    g_hd_current=0;
 +    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || c.cmode!=5
@@ -2232,7 +2293,7 @@ index 8589d33..bee2cc3 100644
 +    for(float value:q.shade) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
 +    scene.quads.push_back(std::move(q));g_hd_current=(uint16_t)scene.quads.size();
 +}
-+
+ 
  static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g);
  
  // A pixel already inside the clipping, or the framebuffer's edge.
@@ -2250,7 +2311,7 @@ index 8589d33..bee2cc3 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +262,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +265,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2269,7 +2330,17 @@ index 8589d33..bee2cc3 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -211,6 +321,7 @@ static uint64_t g_draw_steps;
+@@ -192,8 +305,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+ }
+ 
+ static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
+-    if (n <= 0) return a;
+-    return {a.r + (b.r - a.r) * k / n, a.g + (b.g - a.g) * k / n, a.b + (b.b - a.b) * k / n};
++    return {vdp1_steps::shade(a.r, b.r, k, n), vdp1_steps::shade(a.g, b.g, k, n), vdp1_steps::shade(a.b, b.b, k, n)};
+ }
+ 
+ // A line from p0 to p1; for a texture, row v, its columns spread along the line.
+@@ -211,6 +323,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2277,7 +2348,7 @@ index 8589d33..bee2cc3 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +367,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +369,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2290,7 +2361,7 @@ index 8589d33..bee2cc3 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +406,27 @@ struct RecFrame {
+@@ -289,6 +408,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2318,7 +2389,7 @@ index 8589d33..bee2cc3 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +450,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +452,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2333,7 +2404,7 @@ index 8589d33..bee2cc3 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +466,12 @@ static void draw() {
+@@ -320,6 +468,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2346,7 +2417,7 @@ index 8589d33..bee2cc3 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +758,11 @@ static void erase(int which) {
+@@ -606,7 +760,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2359,7 +2430,7 @@ index 8589d33..bee2cc3 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +832,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +834,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2389,7 +2460,7 @@ index 8589d33..bee2cc3 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +873,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +875,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2429,31 +2500,254 @@ index 8589d33..bee2cc3 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..55ec3b7 100644
+index 15c677f..65ccb23 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -24,14 +24,19 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
-     int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
-     int ends = 0;
-     bool stop = false;
+@@ -9,12 +9,160 @@
+ // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
+ // anti-aliasing, so no holes between lines). A texture's row is the step's
+ // (v = i * h / steps), its column the position along the line
+-// (u = k * w / length). Normal and scaled sprites are quadrilaterals too.
++// (u = k * w / length), sampled at the dot's centre when shrinking (vdp1_steps). Normal and scaled sprites are quadrilaterals too.
+ // Polylines and lines are the lines alone.
+ //
+ 
+ static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1);
+ 
++
++// floor((a * k + b) / d) for k = 0, 1, 2, ... in turn (a, b >= 0, d > 0), without a division a step.
++struct StepDiv {
++    int64_t a = 0, d = 1, q = 0, r = 0;
++    int k = 0;
++    void start(int64_t a_, int64_t b, int64_t d_) { a = a_; d = d_; q = b / d; r = b % d; k = 0; }
++    int at(int want) {                          // want >= the last k asked for
++        while (k < want) {
++            r += a; ++k;
++            if (r >= d) { if (r < 2 * d) { r -= d; ++q; } else { q += r / d; r %= d; } }
++        }
++        return (int)q;
++    }
++};
++
++// line() for the native framebuffer (16 bits a pixel, not double-density, not the scaled
++// companion): the same walk, dots, texels, end codes, Gouraud colours and clipping as the
++// general one below, with the per-dot choices (colour mode, flips, clipping, the colour
++// calculation) made once for the line and the texture column stepped without a division.
++// INSIDE: every dot of the line (its ends' bounding box holds them all, anti-aliasing dots
++// included) is inside the system clipping, the framebuffer and any user clipping that keeps the
++// inside, so the per-dot clipping tests would all pass.
++template <int MODE, bool INSIDE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
++static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
++    const int adx = std::abs(dx), ady = std::abs(dy);
++    const int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
++    const bool hd_owner = g_hd_collect && g_target == g_fb[g_draw_fb];
++    const bool store_scaled = g_render_scale != 1 && !g_gpu_available
++                              && (native_sprite_grid(c) || (c.ctrl & 15) >= 5) && g_target == g_fb[g_draw_fb];
++    const bool replace = !c.mon && (c.ccb & 3) == 0;
++    const int xmax = std::min(g_sys_x, 511), ymax = std::min(g_sys_y, 255);
++    const int ux0 = g_ux0, ux1 = g_ux1, uy0 = g_uy0, uy1 = g_uy1;
++    const bool clip = c.clip, outside = c.outside, mesh = c.mesh, gouraud = c.gouraud;
++    uint16_t* const fb = g_target;
++    const int vv = c.vflip ? c.h - 1 - v : v;
++    const uint32_t rowi = (uint32_t)(vv * c.w);
++    const int w = c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
++    // vdp1_steps::column(s, w, len, hflip) as a stepped quotient: shrink_sample or stretch_sample,
++    // or for a flipped character w - 1 - either at len - s, which is ceil(x) - 1 for the
++    // shrink's centre x and an exact half rounded up for the stretch
++    StepDiv col;
++    const bool shrink = w > len + 1;
++    if (MODE >= 0 && !hss) {
++        if (shrink) col.start(2LL * w, c.hflip ? w - 1 : w, 2LL * (len + 1));
++        else if (len > 0) col.start(2LL * (w - 1), c.hflip ? len : len - 1, 2LL * len);
++        else col.start(0, c.hflip ? w - 1 : 0, 1);
++    }
++    uint16_t mask8 = 0;
++    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
++    vdp1_steps::EndCodes ends;
 +    int sampled_u = -1;
-     auto pixel = [&](int x, int y, int k) {
-         if (stop) return;
++    // the texture memory held in a local: the framebuffer stores cannot make the compiler fetch it again
++    const uint8_t* const tex = g_tex;
++    auto pixel = [&](int x, int y, int k, bool aa) __attribute__((always_inline)) {
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
++        uint16_t pix = c.colr;
++        if constexpr (MODE >= 0) {
++            if (ends.stopped) return;
++            int u;
++            if (hss) u = vdp1_steps::hss_column(s, w, len, c.hflip, eos);
++            else {
++                u = col.at(s);
++                if (shrink && u > w - 1) u = w - 1;
++            }
++            const bool first_sample = u != sampled_u;
++            sampled_u = u;
++            const uint32_t i = rowi + (uint32_t)(c.hflip ? w - 1 - u : u);
++            bool is_end, is_zero;
++            if constexpr (MODE == 0 || MODE == 1) {
++                const uint8_t b = tex[(c.srca + i / 2) & 0x7FFFF];
++                const uint32_t raw = (i & 1) ? (b & 0xF) : (b >> 4);
++                is_end = raw == 0xF; is_zero = raw == 0;
++                pix = MODE == 0 ? (uint16_t)((c.colr & 0xFFF0) | raw) : c.lut[raw];
++            } else if constexpr (MODE == 2) {
++                const uint32_t raw = tex[(c.srca + i) & 0x7FFFF];
++                is_end = raw == 0xFF; is_zero = raw == 0;
++                pix = (uint16_t)((c.colr & ~mask8) | (raw & mask8));
++            } else {
++                // tw(): the big-endian word at an even address, read as one load
++                const uint32_t a = (c.srca + i * 2) & 0x7FFFE;
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++                uint16_t word;
++                std::memcpy(&word, tex + a, 2);
++                const uint32_t raw = __builtin_bswap16(word);
++#else
++                const uint32_t raw = (uint32_t)(tex[a] << 8 | tex[a + 1]);
++#endif
++                is_end = raw == 0x7FFF; is_zero = raw == 0;
++                pix = (uint16_t)raw;
++            }
++            if (is_end && !c.ecd) { ends.read(true, first_sample); return; }
++            if (is_zero && !c.spd) return;
++        }
++        // plot(): system clipping, user clipping, the framebuffer's edge, mesh
++        if constexpr (!INSIDE) {
++            if (x < 0 || y < 0 || x > xmax || y > ymax) return;
++            if (clip && ((x >= ux0 && x <= ux1 && y >= uy0 && y <= uy1) == outside)) return;
++        }
++        if (mesh && ((x ^ y) & 1)) return;
++        const int at = y * 512 + x;
++        if (hd_owner) g_hd_owner[g_draw_fb][at] = g_hd_current;
++        if (gouraud) { const Rgb g = mix(g0, g1, s, len); put(fb[at], c, pix, &g); }
++        else if (replace) fb[at] = pix;
++        else put(fb[at], c, pix, nullptr);
++        if (store_scaled) scaled_store(g_draw_fb, x, y, fb[at]);
++    };
++    int x = p0.x, y = p0.y;
++    if (adx >= ady) {
++        int err = 2 * ady - adx;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                y += yi;
++                err -= 2 * adx;
++            }
++            err += 2 * ady;
++            x += xi;
++        }
++    } else {
++        int err = 2 * adx - ady;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                x += xi;
++                err -= 2 * ady;
++            }
++            err += 2 * adx;
++            y += yi;
++        }
++    }
++}
++
++template <bool INSIDE>
++static void line_mode(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
++    if (!c.textured) line_native<-1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss);
++    else switch (c.cmode) {
++    case 0: line_native<0, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 1: line_native<1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 2: case 3: case 4: line_native<2, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    default: line_native<5, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    }
++}
++
+ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
+     int dx = p1.x - p0.x, dy = p1.y - p0.y;
+@@ -22,21 +170,39 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     int len = std::max(adx, ady);
+     g_draw_steps += (uint64_t)len + 1;
+     int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
+-    int ends = 0;
+-    bool stop = false;
+-    auto pixel = [&](int x, int y, int k) {
+-        if (stop) return;
++    vdp1_steps::EndCodes ends;
++    // high speed shrink (PMOD bit 12): a line with fewer dots than the character is wide
++    const bool hss = c.textured && (c.pmod & 0x1000) && (c.ctrl & 15) != 0 && len + 1 < c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
++    int sampled_u = -1;
++    if (!g_scaled_drawing && !g_hi_target && !g_fb8 && !g_reference_raster) {
++        const int x0 = std::min(p0.x, p1.x), x1 = std::max(p0.x, p1.x), y0 = std::min(p0.y, p1.y), y1 = std::max(p0.y, p1.y);
++        const bool inside = x0 >= 0 && y0 >= 0 && x1 <= std::min(g_sys_x, 511) && y1 <= std::min(g_sys_y, 255)
++                            && (!c.clip || (!c.outside && x0 >= g_ux0 && x1 <= g_ux1 && y0 >= g_uy0 && y1 <= g_uy1));
++        if (inside) line_mode<true>(c, p0, dx, dy, len, v, g0, g1, hss);
++        else line_mode<false>(c, p0, dx, dy, len, v, g0, g1, hss);
++        return;
++    }
++    // `aa` is an anti-aliasing dot: it takes the next step's texel and colour
++    auto pixel = [&](int x, int y, int k, bool aa = false) {
++        if (ends.stopped) return;
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
          uint16_t pix = c.colr;
          if (c.textured) {
              bool end;
-             int u = (int)((int64_t)k * c.w / (len + 1));
+-            int u = (int)((int64_t)k * c.w / (len + 1));
++            const int u = hss ? vdp1_steps::hss_column(s, c.w, len, c.hflip, eos)
++                              : vdp1_steps::column(s, c.w, len, c.hflip);
 +            bool first_sample = u != sampled_u;
 +            sampled_u = u;
              if (!texel(c, u, v, pix, end)) {
 -                if (end && ++ends == 2) stop = true;
 +                // Expansion and corner coverage reuse a source texel. Count its
 +                // end code only when advancing to it, not for every output pixel.
-+                if (end && first_sample && ++ends == 2) stop = true;
++                ends.read(end, first_sample);
                  return;
              }
          }
-@@ -77,19 +82,33 @@ static int step_to(int a, int b, int i, int n) {   // a + (b - a) * i / n, round
+         Rgb g;
+-        if (c.gouraud) g = mix(g0, g1, k, len);
++        if (c.gouraud) g = mix(g0, g1, s, len);
+         plot(c, x, y, pix, c.gouraud ? &g : nullptr);
+     };
+     int x = p0.x, y = p0.y;
+@@ -46,9 +212,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+             pixel(x, y, k);
+             if (k == len) break;
+             if (err > 0) {
++                // anti-aliasing (VDP1 manual, figure 1.6), see vdp1_steps::aa_corner
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
+                 y += yi;
+                 err -= 2 * adx;
+-                pixel(x, y, k);                 // anti-aliasing: the corner between the two steps
+             }
+             err += 2 * ady;
+             x += xi;
+@@ -59,9 +226,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+             pixel(x, y, k);
+             if (k == len) break;
+             if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
+                 x += xi;
+                 err -= 2 * ady;
+-                pixel(x, y, k);
+             }
+             err += 2 * adx;
+             y += yi;
+@@ -69,32 +236,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     }
+ }
+ 
+-static int step_to(int a, int b, int i, int n) {   // a + (b - a) * i / n, rounded
+-    if (n <= 0) return a;
+-    int d = (b - a) * i * 2;
+-    return a + (d >= 0 ? (d + n) / (2 * n) : -((-d + n) / (2 * n)));
++// the signed length of a side p->q along its major axis
++static int major(Pt p, Pt q) {
++    const int dx = q.x - p.x, dy = q.y - p.y;
++    return std::abs(dx) >= std::abs(dy) ? dx : dy;
+ }
  
  // the area a pixel can land in: system clipping, and the user clipping inside it
  static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1) {
@@ -2483,14 +2777,159 @@ index 15c677f..55ec3b7 100644
      int n = std::max(left, right);
 -    if (n > 2048) return;                       // a shape far off the framebuffer: the chip would spend ages on it
 -    for (int i = 0; i <= n && g_draw_steps < kDrawSteps; ++i) {
+-        Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
+-        Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
+-        int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 +    const int scale=g_scaled_drawing ? g_render_scale : 1;
 +    if (n > 2048*scale) return;                       // bound a shape far off the framebuffer
 +    for (int i = 0; i <= n && g_draw_steps < kDrawSteps*scale*scale; ++i) {
-         Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
-         Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
-         int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
++        const int jl = vdp1_steps::side_step(i, left, n, major(a, d));
++        const int jr = vdp1_steps::side_step(i, right, n, major(b, cc));
++        Pt l{vdp1_steps::side_point(a.x, d.x, jl, left), vdp1_steps::side_point(a.y, d.y, jl, left)};
++        Pt r{vdp1_steps::side_point(b.x, cc.x, jr, right), vdp1_steps::side_point(b.y, cc.y, jr, right)};
++        int v = c.textured ? vdp1_steps::row(i, c.h, n, c.vflip) : 0;
+         Rgb gl{}, gr{};
+-        if (c.gouraud) { gl = mix(c.g[0], c.g[3], i, n); gr = mix(c.g[1], c.g[2], i, n); }
++        if (c.gouraud) { gl = mix(c.g[0], c.g[3], jl, left); gr = mix(c.g[1], c.g[2], jr, right); }
+         line(c, l, r, v, gl, gr);
+     }
+ }
+diff --git a/runtime/src/video/vdp1_steps.h b/runtime/src/video/vdp1_steps.h
+new file mode 100644
+index 0000000..2e324b1
+--- /dev/null
++++ b/runtime/src/video/vdp1_steps.h
+@@ -0,0 +1,128 @@
++// saturn-recomp runtime — the step arithmetic of VDP1's shape drawing, kept apart from the
++// drawing so tests can check it. Clean-room: written from Sega's VDP1 User's Manual
++// (ST-013-R3-061694) and black-box comparison of output frames only.
++#pragma once
++#include <cstdint>
++
++namespace vdp1_steps {
++
++// a + (b - a) * k / n with an exact half rounded toward minus infinity.
++inline int lerp_half_down(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t t = (int64_t)(b - a) * k * 2 - n;          // 2n * (exact offset) - n
++    const int64_t q = t >= 0 ? (t + 2 * n - 1) / (2 * n) : -((-t) / (2 * n));
++    return a + (int)q;
++}
++// a + (b - a) * k / n with an exact half rounded toward plus infinity.
++inline int lerp_half_up(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t t = (int64_t)(b - a) * k * 2 + n;
++    const int64_t q = t >= 0 ? t / (2 * n) : -((-t + 2 * n - 1) / (2 * n));
++    return a + (int)q;
++}
++// a + (b - a) * k / n with an exact half rounded away from a.
++inline int lerp_half_away(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t d = (int64_t)(b - a) * k * 2;
++    return a + (int)(d >= 0 ? (d + n) / (2 * n) : -((-d + n) / (2 * n)));
++}
++
++// Edge walk: the point of edge a->b at step i of n.
++inline int edge(int a, int b, int i, int n) { return lerp_half_down(a, b, i, n); }
++
++// The texel a dot takes along a span of `len + 1` steps over a character `span` texels long,
++// counted from the character's first texel, for an unflipped character. Shrinking (more texels
++// than steps): the texel under the step's centre, floor((q + 1/2) * span / (len + 1)).
++// Otherwise corner to corner: the first texel on the first step, the last on the last, an exact
++// half rounded down. Black-box: coordinate-coded characters (every texel holding its own
++// column and row) written into the reference's VRAM through its save state and drawn by it from
++// Shining Force III's own command lists (graveyard, field, bridge battle), compared with these
++// rules texel for texel; the manual puts the character's corners on the vertices but does not
++// give the sampling.
++inline int shrink_sample(int q, int span, int len) {
++    if (len < 0 || span <= 0) return 0;
++    const int s = (int)((int64_t)(2 * q + 1) * span / (2 * (len + 1)));
++    return s < span ? s : span - 1;
++}
++inline int stretch_sample(int q, int span, int len) {
++    if (len <= 0 || span <= 0) return 0;
++    return lerp_half_down(0, span - 1, q, len);
++}
++inline int sample(int q, int span, int len) {
++    return span > len + 1 ? shrink_sample(q, span, len) : stretch_sample(q, span, len);
++}
++// A flipped character is sampled as the unflipped one turned around: step q takes the texel
++// that step len - q would take unflipped, counted from the other end. (So an exact half or a
++// centre on a texel boundary goes the other way: toward the flipped character's first texel.)
++// Returned in drawing order, before the flip the texel fetch applies.
++inline int sample_flip(int q, int span, int len, bool flip) {
++    return flip ? span - 1 - sample(len - q, span, len) : sample(q, span, len);
++}
++// The texture column for dot k of a line of len + 1 dots, and the row for line i of n + 1.
++inline int column(int k, int w, int len, bool hflip = false) { return sample_flip(k, w, len, hflip); }
++inline int row(int i, int h, int n, bool vflip = false) { return sample_flip(i, h, n, vflip); }
++
++// High speed shrink (manual, PMOD bit 12 and FBCR EOS), applied to a line with fewer dots than
++// the character's width: the line steps over the character's w/2 column pairs as column() steps
++// over columns (flip included), and takes the even (eos 0) or odd (eos 1) column of each, counted
++// in the character as stored, so a flipped character keeps the parity of its stored columns.
++// Returns the column in drawing order, like column(). Black-box, as above.
++inline int hss_column(int k, int w, int len, bool hflip, int eos) {
++    const int half = w / 2;
++    if (half <= 0) return 0;
++    int j = column(k, half, len, hflip);
++    if (hflip) j = half - 1 - j;                       // the pair, counted in the stored character
++    int u = 2 * j + (eos & 1);
++    if (u > w - 1) u = w - 1;
++    return hflip ? w - 1 - u : u;
++}
++// The step an anti-aliasing dot (see aa_corner) takes its texel and Gouraud colour from: the
++// next step's, where the line is heading. Black-box, as above.
++inline int aa_step(int k, int len) { return k < len ? k + 1 : len; }
++
++// One Gouraud channel (5 bits) at step k of n between two colours: stepped as a texture is, over
++// the |b - a| + 1 values from a to b as if they were a character's texels (sample(): the centre
++// when there are more values than steps, else corner to corner, halves down), a falling run being
++// the rising one from b turned around (sample_flip()). Black-box: the reference drawing Shining
++// Force III's own command lists with every texel a flat mid grey and coded Gouraud tables written
++// into its VRAM, so each dot shows the Gouraud value; the manual gives the vertex colours only.
++inline int shade(int a, int b, int k, int n) {
++    const int span = (b > a ? b - a : a - b) + 1;
++    return b >= a ? a + sample(k, span, n) : b + sample(n - k, span, n);
++}
++// A quadrilateral's sides are walked together in n steps, n the longer side's length in dots
++// (the larger of |dx| and |dy|). Each side steps over its own length: walk step i of n is the
++// side's step i * len / n, an exact half taken toward the smaller coordinate on the side's major
++// axis (rounded down when that coordinate rises along the side, up when it falls), and the side's
++// point and Gouraud colour are those of its own step (side_point(), shade()). Black-box: the
++// reference's frames of Shining Force III's distorted sprites, where the shorter side's points and
++// colours otherwise land a dot or a shade off on exactly those halves.
++inline int side_step(int i, int len, int n, int major_delta) {
++    return major_delta >= 0 ? lerp_half_down(0, len, i, n) : lerp_half_up(0, len, i, n);
++}
++inline int side_point(int a, int b, int j, int len) { return lerp_half_down(a, b, j, len); }
++
++// Anti-aliasing (manual, figure 1.6): where a line steps both x and y, an extra pixel fills the
++// corner: (new x, old y) when x and y step the same way, (old x, new y) when they step opposite ways.
++struct Corner { int x, y; };
++inline Corner aa_corner(int x, int y, int xi, int yi) {
++    return xi == yi ? Corner{x + xi, y} : Corner{x, y + yi};
++}
++
++// Mesh (manual, PMOD bit 8): only the dots whose x and y have equal low bits are drawn.
++inline bool mesh_drawn(int x, int y) { return ((x ^ y) & 1) == 0; }
++
++// End codes (manual, ECD): an end code is transparent, and a line stops drawing at the second
++// end code read from the character. A texel repeated by enlargement is one read.
++struct EndCodes {
++    int seen = 0;
++    bool stopped = false;
++    // A texel read: returns false once the line has stopped.
++    bool read(bool end, bool new_texel) {
++        if (stopped) return false;
++        if (end && new_texel && ++seen == 2) stopped = true;
++        return !stopped;
++    }
++};
++
++}  // namespace vdp1_steps
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..e382fc0 100644
+index 4c8bcb1..8882583 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2505,19 +2944,26 @@ index 4c8bcb1..e382fc0 100644
  // NBG3); special priority and special colour calculation by screen or by
  // character, and colour calculation by the colour's MSB; colour calculation
  // of the top two layers (the top one's ratio or the second's, or add), with
-@@ -21,16 +22,20 @@
+@@ -20,17 +21,24 @@
+ // dots), with double-density interlace composed as one picture of both
  // fields' lines (448, 480 or 512), the scroll screens a dot row a line;
  // shadows (normal, MSB and transparent) on the scroll screens, the back
- // screen and the sprite itself.
+-// screen and the sprite itself.
 -// What is not: RBG0 and RBG1 (rotation), line and vertical-cell scroll,
-+// What is not: RBG1, window-selected rotation parameters, line and vertical-cell scroll,
++// screen and the sprite itself; NBG0/NBG1 line scroll (horizontal, vertical
++// and horizontal zoom, a table entry for every 1, 2, 4 or 8 lines); extended
++// colour calculation.
++// What is not: RBG1, window-selected rotation parameters, vertical-cell scroll,
  // mosaic, the sprite window, special priority and colour calculation by dot
- // (the special function codes), gradation of RBG0, extended colour
- // calculation, the exclusive resolutions. A register that asks for one of them is noted once.
+-// (the special function codes), gradation of RBG0, extended colour
+-// calculation, the exclusive resolutions. A register that asks for one of them is noted once.
++// (the special function codes), gradation of RBG0, line colour from rotation coefficients,
++// the exclusive resolutions. A register that asks for one of them is noted once.
  #include "saturn.h"
  #include "state.h"
  #include "video.h"
 +#include <array>
++#include <atomic>
  #include <algorithm>
  #include <cstring>
  #include <vector>
@@ -2527,7 +2973,7 @@ index 4c8bcb1..e382fc0 100644
  
  uint8_t g_vdp2_vram[0x80000], g_vdp2_cram[0x1000], g_vdp2_regs[0x200];
  
-@@ -43,8 +48,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
+@@ -43,8 +51,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
      return (int32_t)((value & (sign * 2 - 1)) ^ sign) - (int32_t)sign;
  }
  
@@ -2542,8 +2988,11 @@ index 4c8bcb1..e382fc0 100644
      uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
      auto parameter = [&](uint32_t off, int bits, int shift) {
          return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
-@@ -100,7 +109,7 @@ struct Pix {
+@@ -98,9 +110,10 @@ struct Pix {
+     bool spr, scc;                              // the character's special priority and colour calculation bits
+     bool msb;                                   // the colour data's MSB
      bool shade;                                 // an MSB shadow: the sprite dot at half brightness
++    bool direct;                                // an RGB dot (not from colour RAM): the back screen, RGB data
  };
  
 -enum { L_SPRITE, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
@@ -2551,7 +3000,87 @@ index 4c8bcb1..e382fc0 100644
  
  // ---- the scroll screens ---------------------------------------------------------------------
  struct Nbg {
-@@ -267,6 +276,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+@@ -118,8 +131,38 @@ struct Nbg {
+     int32_t sx, sy, dx, dy;                     // scroll and increments, 8 fraction bits
+     uint8_t prio, ratio;
+     bool cc, offset, offset_b;
++    // NBG0/NBG1 line scroll (SCRCTL): per display line, the horizontal scroll added to sx, the
++    // vertical coordinate (scroll plus the table's, in place of the line count) and the x increment
++    bool line_x = false, line_y = false, line_zoom = false;
++    std::vector<std::array<int32_t, 3>> lines;
+ };
+ 
++static uint32_t vl(uint32_t a);
++
++// SCRCTL line scroll for NBG0/NBG1: the table at LSTAn holds, for each group of 1/2/4/8 lines, a
++// long for each of horizontal scroll, vertical scroll and horizontal zoom that SCRCTL turns on, in
++// that order: scroll as 11 integer and 8 fraction bits (26-8), zoom as 3 and 8 (18-8).
++static void setup_line_scroll(int n, Nbg& s) {
++    uint16_t ctl = (uint16_t)(reg(0x9A) >> (n * 8));
++    s.line_x = ctl >> 1 & 1;
++    s.line_y = ctl >> 2 & 1;
++    s.line_zoom = ctl >> 3 & 1;
++    if (!s.line_x && !s.line_y && !s.line_zoom) return;
++    int interval = 1 << (ctl >> 4 & 3);
++    int entries = s.line_x + s.line_y + s.line_zoom;
++    uint32_t table = ((uint32_t)(reg(0xA0 + n * 4) & 7) << 16 | (reg(0xA2 + n * 4) & 0xFFFE)) << 1;
++    int height = vdp2_lines() * 2;               // room for either field in double density
++    s.lines.resize((size_t)height);
++    for (int y = 0; y < height; ++y) {
++        uint32_t at = table + (uint32_t)((y / interval) * entries) * 4;
++        auto& l = s.lines[(size_t)y];
++        l = {0, 0, s.dx};
++        if (s.line_x) { l[0] = (int32_t)(vl(at) >> 8 & 0x7FFFF); at += 4; }
++        if (s.line_y) { l[1] = (int32_t)(vl(at) >> 8 & 0x7FFFF); at += 4; }
++        if (s.line_zoom) { l[2] = (int32_t)(vl(at) >> 8 & 0x7FF); }
++    }
++}
++
+ static void setup_nbg(int n, Nbg& s) {
+     s = Nbg{};
+     uint16_t bgon = reg(0x20);
+@@ -171,6 +214,7 @@ static void setup_nbg(int n, Nbg& s) {
+         s.sy = (int32_t)((reg(b + 4) & 0x7FF) << 8 | reg(b + 6) >> 8);
+         s.dx = (int32_t)((reg(b + 8) & 7) << 8 | reg(b + 10) >> 8);
+         s.dy = (int32_t)((reg(b + 12) & 7) << 8 | reg(b + 14) >> 8);
++        setup_line_scroll(n, s);
+     } else {
+         uint32_t b = 0x90 + (n - 2) * 4;
+         s.sx = (int32_t)(reg(b) & 0x7FF) << 8;
+@@ -199,6 +243,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         if (!(w & 0x8000) && !s.opaque) return false;
+         p.rgb = rgb555(w);
+         p.msb = w >> 15;
++        p.direct = true;
+         return true;
+     }
+     default: {
+@@ -206,6 +251,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         if (!(w & 0x80000000u) && !s.opaque) return false;
+         p.rgb = (w & 0xFF) << 16 | (w & 0xFF00) | (w >> 16 & 0xFF);
+         p.msb = w >> 31;
++        p.direct = true;
+         return true;
+     }
+     }
+@@ -216,7 +262,15 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+ }
+ 
+ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+-    uint32_t sx = (uint32_t)(s.sx + x * s.dx) >> 8, sy = (uint32_t)(s.sy + y * s.dy) >> 8;
++    uint32_t sx, sy;
++    if (!s.lines.empty() && y >= 0 && (size_t)y < s.lines.size()) {
++        const auto& l = s.lines[(size_t)y];
++        sx = (uint32_t)(s.sx + l[0] + x * l[2]) >> 8;
++        sy = (uint32_t)(s.line_y ? s.sy + l[1] : s.sy + y * s.dy) >> 8;
++    } else {
++        sx = (uint32_t)(s.sx + x * s.dx) >> 8;
++        sy = (uint32_t)(s.sy + y * s.dy) >> 8;
++    }
+     if (s.bitmap) {
+         sx &= (uint32_t)s.bm_w - 1;
+         sy &= (uint32_t)s.bm_h - 1;
+@@ -267,6 +321,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
      return dot(s, base, px & 7, py & 7, 8, pal, p);
  }
  
@@ -2790,16 +3319,43 @@ index 4c8bcb1..e382fc0 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +608,7 @@ static void note_unsupported() {
+@@ -292,6 +578,7 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+     SpriteDot kind = S_DOT;
+     if (mixed && (d & 0x8000)) {
+         p.rgb = rgb555(d);
++        p.direct = true;
+         p.prio = prio_of(0);
+         p.ratio = ratio_of(0);
+         msb = true;
+@@ -367,21 +654,23 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
 -    once(0, reg(0x20) & 0x30, "RBG0/RBG1", reg(0x20));
+-    once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
 +    once(0, (reg(0x20) & 0x20) || ((reg(0x20) & 0x10) && (reg(0xB0) & 3) == 3), "RBG1 or rotation parameters chosen by window", reg(0x20));
-     once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
++    once(1, reg(0x9A) & 0x0101, "vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +634,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+-    once(4, (reg(0xEC) & 0x8400) == 0x0400 && reg(0xEC) & 0x5F, "extended colour calculation (CCCTL)", reg(0xEC));
+     once(8, reg(0xEC) & 0x8000 && (reg(0xEC) >> 12 & 7) == 1, "gradation of RBG0 (CCCTL)", reg(0xEC));
+     once(5, (reg(0x00) & 7) >= 4, "an exclusive resolution (TVMD)", reg(0x00));
+     auto mode = [](uint16_t r, int m) {
+         for (int n = 0; n < 4; ++n) if ((r >> (n * 2) & 3) == m) return true;
+         return false;
+     };
+-    once(6, reg(0xE8) & 0x10, "the line colour screen under RBG0 (LNCLEN)", reg(0xE8));
++    // RBG0's line colour insertion itself is done; a coefficient table's per-dot line colour (KTCTL LCCE) is not
++    once(6, reg(0xE8) & 0x10 && reg(0xB4) & 0x1111 & ((reg(0xB4) & 0x1010) >> 4), "line colour from rotation coefficients (KTCTL LCCE)", reg(0xB4));
+     once(7, mode(reg(0xEA), 2) || mode(reg(0xEE), 2), "special priority or colour calculation by dot (SFPRMD, SFCCMD)", reg(0xEA));
+ }
+ 
++static uint32_t avg_rgb(uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; }
++
+ static uint32_t apply_offset(uint32_t rgb, bool b) {
+     uint32_t base = b ? 0x11A : 0x114;
+     int out = 0;
+@@ -393,23 +682,63 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -2813,6 +3369,9 @@ index 4c8bcb1..e382fc0 100644
 +        hd_fingerprint(f.hd->fingerprint,uint16_t(e.offset[0])|(uint64_t(uint16_t(e.offset[1]))<<16)|(uint64_t(uint16_t(e.offset[2]))<<32));
 +    }
 +}
++
++static bool g_serial_composition=std::getenv("SF3_SERIAL_COMPOSITION")!=nullptr;
++void vdp2_serial_composition(bool on) {g_serial_composition=on;}
 +
 +static void compose_frame(Frame& f,bool expand,const Frame* current=nullptr,bool reference_metadata=false) {
      uint16_t tvmd = reg(0x00);
@@ -2839,7 +3398,30 @@ index 4c8bcb1..e382fc0 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +680,7 @@ void vdp2_compose(Frame& f) {
+     bool second_ratio = reg(0xEC) >> 9 & 1;      // CCRTMD: the ratio is the second image's
++    // EXCCEN (normal resolution): where the second image's screen has colour calculation enabled in
++    // CCCTL, it is first averaged with the third image. With line colour insertion, the line colour is
++    // averaged with the image under the top (in colour RAM mode 0 halved when that screen's colour
++    // calculation is enabled; in modes 1 and 2 averaged with the image under it instead). In colour
++    // RAM modes 1 and 2 an image is only averaged in when its dot is RGB rather than colour RAM.
++    const bool excc = (reg(0xEC) & 0x8400) == 0x0400 && !(hreso & 6);
++    const bool cram0 = cram_mode() == 0;
++    auto layer_cce = [](int i) { return (reg(0xEC) >> (i == L_SPRITE ? 6 : i == L_RBG0 ? 4 : i - L_NBG0) & 1) != 0; };
++    // u: the second image (or the line colour); s2, s3, s4: the images under the top in order
++    auto extended = [cram0](uint32_t u, bool line, bool s2_cce, const Pix& s2, const Pix& s3, const Pix& s4) {
++        if (line) {
++            if (cram0) return avg_rgb(u, s2_cce ? s2.rgb >> 1 & 0x7F7F7F : s2.rgb);
++            if (!s2.direct) return u;
++            return avg_rgb(u, s2_cce && s4.direct ? avg_rgb(s2.rgb, s4.rgb) : s2.rgb);
++        }
++        return s2_cce && (cram0 || s3.direct) ? avg_rgb(u, s3.rgb) : u;
++    };
+     Pix back{};
++    back.direct = true;
+     back.offset = reg(0x110) >> 5 & 1;
+     back.offset_b = reg(0x112) >> 5 & 1;
+     back.ratio = (uint8_t)(reg(0x10E) >> 8 & 0x1F);
+@@ -420,7 +749,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -2848,7 +3430,7 @@ index 4c8bcb1..e382fc0 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +688,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +757,44 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -2865,7 +3447,11 @@ index 4c8bcb1..e382fc0 100644
 +        && current->hd->effects.size()==current->px.size();
 +    // GPU metadata composition has independent rows. Keep the serial reference
 +    // and unsupported video paths, and merge provenance in original raster order.
-+    const bool parallel=gpu && !reference_metadata && std::thread::hardware_concurrency()>=4 && !std::getenv("SF3_SERIAL_COMPOSITION");
++    // Every row is a pure function of the video memory and registers, which nothing writes while
++    // the field is composed, so rows may be composed on any thread in any order: the picture is
++    // the same dot for dot. The GPU path merges provenance afterwards, in raster order.
++    static const unsigned hw_threads=std::thread::hardware_concurrency();
++    const bool parallel=!reference_metadata && hw_threads>=2 && !g_serial_composition;
 +    auto rows=[&,rbg,back,line_colour](int begin,int end) mutable {
      std::vector<uint32_t> blur(grad >= 0 ? f.w : 0);
 -    for (int y = 0; y < f.h; ++y) {
@@ -2890,7 +3476,7 @@ index 4c8bcb1..e382fc0 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +729,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,35 +802,61 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -2919,11 +3505,16 @@ index 4c8bcb1..e382fc0 100644
 +                if(!parallel)provenance_hash(f,dst);continue;
 +            }
              Pix l[L_COUNT];
-             int top = -1, second = -1;
+-            int top = -1, second = -1;
++            int top = -1, second = -1, third = -1, fourth = -1;
              auto consider = [&](int i) {
-@@ -458,16 +756,32 @@ void vdp2_compose(Frame& f) {
-                 if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
-                 else if (second < 0 || l[i].prio > l[second].prio) second = i;
+                 if (!l[i].prio) return;
+-                if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
+-                else if (second < 0 || l[i].prio > l[second].prio) second = i;
++                if (top < 0 || l[i].prio > l[top].prio) { fourth = third; third = second; second = top; top = i; }
++                else if (second < 0 || l[i].prio > l[second].prio) { fourth = third; third = second; second = i; }
++                else if (third < 0 || l[i].prio > l[third].prio) { fourth = third; third = i; }
++                else if (fourth < 0 || l[i].prio > l[fourth].prio) fourth = i;
              };
 -            // in the order that wins ties: sprite, then NBG0..NBG3
 +            // in the order that wins ties: sprite, RBG0, then NBG0..NBG3
@@ -2957,7 +3548,7 @@ index 4c8bcb1..e382fc0 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +799,12 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +874,18 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -2969,10 +3560,16 @@ index 4c8bcb1..e382fc0 100644
                    : second >= 0 ? l[second] : back;
 -            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[x];
 +            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[output_x];
++            else if (excc && top >= 0) {
++                const Pix& s2 = second >= 0 ? l[second] : back;
++                const Pix& s3 = third >= 0 ? l[third] : back;
++                u.rgb = extended(u.rgb, lnclen >> (top == L_SPRITE ? 5 : top == L_RBG0 ? 4 : top - L_NBG0) & 1,
++                                 second >= 0 && layer_cce(second), s2, s3, fourth >= 0 ? l[fourth] : back);
++            }
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +820,128 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +901,142 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -2997,7 +3594,15 @@ index 4c8bcb1..e382fc0 100644
 +                        for(int i=1;i<L_COUNT;++i) take(i);
 +                        const Pix& first=a>=0 ? l[a] : back;
 +                        const bool line=a>=0 && (lnclen>>(a==L_SPRITE?5:a==L_RBG0?4:a-L_NBG0)&1);
-+                        const Pix& next=line ? line_colour : b>=0 ? l[b] : back;
++                        Pix next=line ? line_colour : b>=0 ? l[b] : back;
++                        if(excc && a>=0) {
++                            int c=-1,d=-1;
++                            for(int i=0;i<L_COUNT;++i) if(i!=a && i!=b && l[i].prio && (i!=L_SPRITE || present)) {
++                                if(c<0 || l[i].prio>l[c].prio) {d=c;c=i;}
++                                else if(d<0 || l[i].prio>l[d].prio) d=i;
++                            }
++                            next.rgb=extended(next.rgb,line,b>=0 && layer_cce(b),b>=0 ? l[b] : back,c>=0 ? l[c] : back,d>=0 ? l[d] : back);
++                        }
 +                        const bool calculation=a>=0 && first.cc && !windowed(cc_wctl,win,x);
 +                        uint32_t value=first.rgb;
 +                        const int ratio=second_ratio ? next.ratio : first.ratio;
@@ -3057,15 +3662,21 @@ index 4c8bcb1..e382fc0 100644
      }
 +    };
 +    if(parallel) {
-+        {
-+            std::array<std::jthread,3> workers;
-+            int next=1;
-+            try {for(;next<4;++next)workers[next-1]=std::jthread(rows,f.h*next/4,f.h*(next+1)/4);}
-+            catch(const std::system_error&) {} // Finish any unavailable worker chunks locally.
-+            rows(0,f.h/4);
-+            for(;next<4;++next)rows(f.h*next/4,f.h*(next+1)/4);
-+        } // Join every worker before hashing or handing pixels to the GPU.
-+        for(size_t at=0;at<f.px.size();++at)provenance_hash(f,at);
++        // Bands of rows handed out in turn, so a costly band (a rotated floor) does not hold the
++        // field back on one thread; each thread works with its own copy of the row state.
++        const int bands=16;
++        std::atomic<int> next_band{0};
++        auto work=[&next_band,&f,bands](decltype(rows) band_rows) {
++            for(int b;(b=next_band.fetch_add(1))<bands;) band_rows(f.h*b/bands,f.h*(b+1)/bands);
++        };
++        std::array<std::thread,3> workers;                       // up to 4 threads with this one
++        for(unsigned i=0;i+1<hw_threads && i<workers.size();++i) {
++            try {workers[i]=std::thread(work,rows);}
++            catch(const std::system_error&) {break;}     // Finish any unavailable worker's bands locally.
++        }
++        work(rows);
++        for(auto& w:workers) if(w.joinable()) w.join();  // every band done before hashing or handing pixels on
++        if(f.hd) for(size_t at=0;at<f.px.size();++at)provenance_hash(f,at);
 +    } else rows(0,f.h);
 +}
 +
@@ -3171,7 +3782,7 @@ index 88d1642..c9182c1 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..c68e655 100644
+index ebaa466..e8a91c3 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3182,7 +3793,7 @@ index ebaa466..c68e655 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,49 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,23 +18,51 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -3197,6 +3808,7 @@ index ebaa466..c68e655 100644
  uint64_t vdp1_frame_changes();
  uint64_t vdp1_draws();
 -void vdp1_dump(FILE* f);                             // VRAM, the draw framebuffer, the registers
++void vdp1_reference_raster(bool on);                 // tests: every line by the general walk, not the native-framebuffer one
 +void vdp1_dump(FILE* f, bool shown = false);          // VRAM, a framebuffer, the registers
  bool vdp1_interp_field(bool compose);                // --interp: a frame in between for this field?
  void vdp1_interp_scroll(uint8_t* regs);              // ... and VDP2's scroll registers for it
@@ -3223,6 +3835,7 @@ index ebaa466..c68e655 100644
  };
  void vdp2_compose(Frame& out);                       // the picture of the field that has just ended
 +void vdp2_compose_reference(Frame& out);             // diagnostic reference for GPU composition metadata
++void vdp2_serial_composition(bool on);               // rows on this thread alone (SF3_SERIAL_COMPOSITION); else bands of rows on 4 threads
 +uint64_t vdp2_cached_fields();
 +bool vdp2_compose_wide(Frame& out,const Frame* current_native=nullptr); // reuse this field's native center when available
  int vdp2_lines();                                    // 224, 240 or 256 (TVMD VRESO)
@@ -3233,6 +3846,20 @@ index ebaa466..c68e655 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
+index 39eb423..ba52253 100644
+--- a/runtime/tests/CMakeLists.txt
++++ b/runtime/tests/CMakeLists.txt
+@@ -8,5 +8,8 @@ if(NOT CMAKE_BUILD_TYPE)
+   set(CMAKE_BUILD_TYPE Release)
+ endif()
+ include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
+-add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp vdp1_raster_test.cpp)
+ target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
++# runtime_bench: disc-free timings of the hot paths (invented modules, command tables, screens)
++add_executable(runtime_bench runtime_bench.cpp)
++target_link_libraries(runtime_bench saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3266,6 +3893,560 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/runtime_bench.cpp b/runtime/tests/runtime_bench.cpp
+new file mode 100644
+index 0000000..0603a4f
+--- /dev/null
++++ b/runtime/tests/runtime_bench.cpp
+@@ -0,0 +1,315 @@
++// runtime_bench: disc-free timings of the runtime's hot paths, for comparing hosts (Apple Silicon,
++// x86-64 Linux) and builds. No game code or game data: invented modules, command tables and
++// screens, fixed seeds. Each faster path is timed beside the path it stands in for, and its
++// output is checked against it; any difference fails the run.
++//   runtime_bench [--quick] [--markdown] [--json FILE]
++//
++// vdp1   VDP1 command tables drawn into the native framebuffer: the native line walk against
++//        the general walk (vdp1_reference_raster).
++// vdp2   VDP2 composition of a 320x224 field (two bitmap screens, sprites, colour calculation):
++//        bands of rows on worker threads against all rows on one thread.
++// lookup sh2_lookup over an invented module table with an overlay swapped at one address; also
++//        checks that the lookup cache sees a module header overwritten in memory.
++#include "saturn/sh2.h"
++#include "video.h"
++#include <algorithm>
++#include <array>
++#include <utility>
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <random>
++#include <string>
++#include <thread>
++#include <vector>
++
++// ---- an invented module table (what a game's generated modules.cpp defines) -----------------
++namespace {
++template <int N> void fn(SH2Context& c) { c.r[0] += N; }
++template <int... I> constexpr std::array<SH2Func, sizeof...(I)> fns(std::integer_sequence<int, I...>) { return {&fn<I>...}; }
++const auto kFns = fns(std::make_integer_sequence<int, 64>{});
++
++SH2Module g_boot{"BENCH_BOOT", 0x06004000, 0x40000, 0, nullptr, 0, nullptr, nullptr, false};
++SH2Module g_ova{"BENCH_OVA", 0x06050000, 0x20000, 0, nullptr, 0, nullptr, nullptr, true};
++SH2Module g_ovb{"BENCH_OVB", 0x06050000, 0x20000, 0, nullptr, 0, nullptr, nullptr, true};
++SH2Module g_low{"BENCH_LOW", 0x00200000, 0x40000, 0, nullptr, 0, nullptr, nullptr, true};
++std::vector<SH2FuncEntry> g_entries[4];
++}  // namespace
++
++extern const SH2Module* const g_sh2_modules[] = {&g_boot, &g_ova, &g_ovb, &g_low};
++extern const int g_sh2_nmodules = 4;
++extern const uint32_t g_sh2_tasks[2] = {0, 0};
++extern const SH2TaskSwitch g_sh2_task_switches[] = {{0, 0, 0, 0, 0}};
++extern const int g_sh2_ntask_switches = 0;
++
++namespace {
++
++using Clock = std::chrono::steady_clock;
++double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
++
++struct Row { std::string group, name, unit; double base, fast; };
++std::vector<Row> g_rows;
++int g_failures;
++void fail(const char* what) { std::fprintf(stderr, "FAIL: %s\n", what); ++g_failures; }
++
++uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
++    for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
++    return h;
++}
++
++// ---- VDP1 -------------------------------------------------------------------------------
++void be16(uint32_t a, uint16_t v) { g_vdp1_vram[a & 0x7FFFF] = (uint8_t)(v >> 8); g_vdp1_vram[(a + 1) & 0x7FFFF] = (uint8_t)v; }
++
++struct Table {
++    uint32_t a = 0;
++    void cmd(uint16_t ctrl, uint16_t pmod, uint16_t colr, uint32_t srca, int w, int h, const int* xy, uint32_t grda = 0) {
++        be16(a, ctrl); be16(a + 2, 0); be16(a + 4, pmod); be16(a + 6, colr); be16(a + 8, (uint16_t)(srca / 8));
++        be16(a + 10, (uint16_t)((w / 8) << 8 | h));
++        for (int i = 0; i < 8; ++i) be16(a + 12 + i * 2, (uint16_t)(xy[i] & 0x1FFF));
++        be16(a + 28, (uint16_t)(grda / 8)); be16(a + 30, 0);
++        a += 0x20;
++    }
++    void end() { be16(a, 0x8000); }
++};
++
++// Textures from 0x20000: 16-bit RGB and 4-bit colour-table characters, transparent dots and all.
++void textures(std::mt19937& rng) {
++    for (uint32_t a = 0x20000; a < 0x80000; a += 2) {
++        uint32_t r = rng();
++        uint16_t v = (r & 7) == 0 ? 0 : (uint16_t)(0x8000 | (r >> 8 & 0x7FFF));
++        be16(a, v);
++    }
++    for (uint32_t a = 0x7F000; a < 0x7F800; a += 2) be16(a, (uint16_t)(0x8000 | (rng() & 0x7FFF)));   // colour tables
++    for (uint32_t a = 0x7F800; a < 0x80000; a += 2) be16(a, (uint16_t)(rng() & 0x7FFF));             // Gouraud tables
++}
++
++void scene(const char* name, std::mt19937& rng, Table& t) {
++    auto r = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
++    int sys[8] = {0, 0, 0, 0, 319, 223, 0, 0};
++    t.cmd(0x0009, 0, 0, 0, 0, 0, sys);
++    int user[8] = {0, 0, 0, 0, 319, 223, 0, 0};
++    t.cmd(0x0008, 0, 0, 0, 0, 0, user);
++    int local[8] = {0, 0, 0, 0, 0, 0, 0, 0};
++    t.cmd(0x000A, 0, 0, 0, 0, 0, local);
++    std::string s = name;
++    auto tex = [&](int w, int h) { return (uint32_t)(0x20000 + r(0, (0x5E000 - w * h * 2) / 8) * 8); };
++    if (s == "sprites") {                       // normal sprites, 32x32, RGB and colour table
++        for (int i = 0; i < 400; ++i) {
++            int xy[8] = {r(-16, 304), r(-16, 208)};
++            bool lut = i & 1;
++            t.cmd((uint16_t)(0x0000 | r(0, 3) << 4), (uint16_t)((lut ? 1 : 5) << 3 | 0x80),
++                  (uint16_t)(lut ? (0x7F000 + r(0, 63) * 32) / 8 : 0), tex(32, 32), 32, 32, xy);
++        }
++    } else if (s == "scaled") {                 // scaled sprites, 32x32 to 16..64 on screen
++        for (int i = 0; i < 200; ++i) {
++            int x = r(-20, 300), y = r(-20, 200), w = r(16, 64), h = r(16, 64);
++            int xy[8] = {x, y, 0, 0, x + w, y + h};
++            t.cmd(0x0001, 5 << 3 | 0x80, 0, tex(32, 32), 32, 32, xy);
++        }
++    } else if (s == "floor") {                  // distorted sprites as perspective floor tiles, some shaded
++        for (int row = 0; row < 14; ++row)
++            for (int col = 0; col < 20; ++col) {
++                double y0 = 40 + row * row * 0.95, y1 = 40 + (row + 1) * (row + 1) * 0.95;
++                double s0 = 0.4 + row * 0.07, s1 = 0.4 + (row + 1) * 0.07;
++                auto px = [&](double c, double sc) { return (int)(160 + (c - 10) * 32 * sc); };
++                int xy[8] = {px(col, s0), (int)y0, px(col + 1, s0), (int)y0, px(col + 1, s1), (int)y1, px(col, s1), (int)y1};
++                bool shade = (row + col) % 3 == 0;
++                t.cmd(0x0002, (uint16_t)(5 << 3 | 0x80 | (shade ? 4 : 0)), 0, tex(32, 32), 32, 32, xy,
++                      0x7F800 + r(0, 255) * 8);
++            }
++    } else {                                    // untextured polygons: Gouraud, half-transparency
++        for (int i = 0; i < 300; ++i) {
++            int x = r(0, 300), y = r(0, 200);
++            int xy[8] = {x, y, x + r(5, 60), y + r(-10, 10), x + r(5, 60), y + r(5, 60), x + r(-10, 10), y + r(5, 60)};
++            uint16_t ccb = (uint16_t)(i % 4 == 0 ? 4 : i % 4 == 1 ? 3 : 0);
++            t.cmd(0x0004, (uint16_t)(0xC0 | ccb), (uint16_t)(0x8000 | r(0, 0x7FFF)), 0, 0, 0, xy, 0x7F800 + r(0, 255) * 8);
++        }
++    }
++    t.end();
++}
++
++uint64_t fb_hash(int* lit = nullptr) {
++    std::vector<uint16_t> fb(512 * 256);
++    for (int i = 0; i < 512 * 256; ++i) fb[i] = (uint16_t)vdp1_fb_read(i * 2, 2);
++    if (lit) *lit = (int)std::count_if(fb.begin(), fb.end(), [](uint16_t d) { return d != 0; });
++    return fnv(fb.data(), fb.size() * 2);
++}
++void fb_clear() { for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, 0, 2); }
++
++void bench_vdp1(bool quick) {
++    vdp1_init();
++    vdp1_reg_write(0x00, 0, 2);                          // TVMR: 16 bits a pixel
++    vdp1_reg_write(0x02, 0, 2);
++    for (const char* name : {"sprites", "scaled", "floor", "polygons"}) {
++        std::mt19937 rng(1996);
++        std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);
++        textures(rng);
++        Table t;
++        scene(name, rng, t);
++        const int draws = quick ? 10 : 150;
++        double ms[2];
++        uint64_t hash[2];
++        for (int reference = 1; reference >= 0; --reference) {
++            vdp1_reference_raster(reference);
++            fb_clear();
++            vdp1_reg_write(0x04, 1, 2);
++            int lit = 0;
++            hash[reference] = fb_hash(&lit);
++            if (lit < 320 * 224 / 5) fail((std::string("vdp1 ") + name + ": the invented scene did not draw").c_str());
++            if (std::getenv("BENCH_VERBOSE")) std::fprintf(stderr, "vdp1 %s: %d dots drawn\n", name, lit);
++            auto t0 = Clock::now();
++            for (int i = 0; i < draws; ++i) vdp1_reg_write(0x04, 1, 2);    // PTMR 1: draw now
++            ms[reference] = ms_since(t0) / draws;
++        }
++        vdp1_reference_raster(false);
++        if (hash[0] != hash[1]) fail((std::string("vdp1 ") + name + ": native walk differs from the general walk").c_str());
++        g_rows.push_back({"vdp1", name, "ms/draw", ms[1], ms[0]});
++    }
++}
++
++// ---- VDP2 -------------------------------------------------------------------------------
++void reg2(uint32_t off, uint16_t v) { g_vdp2_regs[off] = v >> 8; g_vdp2_regs[off + 1] = (uint8_t)v; }
++
++void bench_vdp2(bool quick) {
++    std::mt19937 rng(1998);
++    std::memset(g_vdp2_regs, 0, sizeof g_vdp2_regs);
++    for (auto& b : g_vdp2_vram) b = (uint8_t)rng();
++    for (size_t i = 0; i < sizeof g_vdp2_cram; i += 2) { uint16_t v = (uint16_t)(rng() & 0x7FFF); g_vdp2_cram[i] = v >> 8; g_vdp2_cram[i + 1] = (uint8_t)v; }
++    reg2(0x00, 0x8000);                          // TVMD: display on, 320x224
++    reg2(0x20, 0x0003);                          // BGON: NBG0, NBG1
++    reg2(0x28, 0x1212);                          // CHCTLA: NBG0 and NBG1 bitmaps, 256 colours, 512x256
++    reg2(0x3C, 0x0010);                          // MPOFN: NBG1's bitmap at 0x20000
++    reg2(0x78, 0x0001); reg2(0x7C, 0x0001);      // NBG0 zoom 1.0
++    reg2(0x88, 0x0001); reg2(0x8C, 0x0001);      // NBG1 zoom 1.0
++    reg2(0x80, 0x0013); reg2(0x84, 0x0007);      // NBG1 scrolled
++    reg2(0xF8, 0x0302);                          // PRINA: NBG0 2, NBG1 3
++    reg2(0xF0, 0x0505); reg2(0xF2, 0x0505); reg2(0xF4, 0x0505); reg2(0xF6, 0x0505);   // sprites 5
++    reg2(0xE0, 0x0020);                          // SPCTL: RGB and palette sprite dots
++    reg2(0xEC, 0x0002);                          // CCCTL: NBG1 colour calculation
++    reg2(0x108, 0x0C00);                         // CCRNA: NBG1 ratio
++    reg2(0xAC, 0x0003); reg2(0xAE, 0xFFFF);      // back screen at the end of VRAM
++    // VDP1 shows sprites: rectangles of RGB dots and transparent gaps
++    for (int y = 0; y < 256; ++y)
++        for (int x = 0; x < 512; ++x) {
++            bool on = ((x / 24 + y / 20) % 3) != 0;
++            vdp1_fb_write((uint32_t)(y * 512 + x) * 2, on ? (uint32_t)(0x8000 | ((x * 7 + y * 3) & 0x7FFF)) : 0, 2);
++        }
++    vdp1_vblank_out();
++    const int frames = quick ? 20 : 300;
++    double ms[2];
++    uint64_t hash[2];
++    for (int serial = 1; serial >= 0; --serial) {
++        vdp2_serial_composition(serial);
++        Frame f;
++        vdp2_compose(f);
++        hash[serial] = fnv(f.px.data(), f.px.size() * 4);
++        size_t lit = std::count_if(f.px.begin(), f.px.end(), [](uint32_t p) { return p != 0; });
++        if (f.w != 320 || f.h != 224 || lit < f.px.size() / 2) fail("vdp2: the invented screen did not show");
++        auto t0 = Clock::now();
++        for (int i = 0; i < frames; ++i) vdp2_compose(f);
++        ms[serial] = ms_since(t0) / frames;
++    }
++    vdp2_serial_composition(false);
++    if (hash[0] != hash[1]) fail("vdp2: rows composed on worker threads differ from one thread's");
++    g_rows.push_back({"vdp2", std::string("compose 320x224 (") + std::to_string(std::thread::hardware_concurrency()) + " hw threads)",
++                      "ms/field", ms[1], ms[0]});
++}
++
++// ---- sh2_lookup -------------------------------------------------------------------------
++uint8_t* mem(uint32_t a) { return a >> 20 == 0x060 ? g_wram_h + (a & 0xFFFFF) : g_wram_l + (a & 0xFFFFF); }
++
++void image(SH2Module& m, uint32_t seed, int stride, int offset) {
++    std::mt19937 rng(seed);
++    for (uint32_t i = 0; i < m.size; ++i) mem(m.base)[i] = (uint8_t)rng();
++    m.crc = sh2_crc32(mem(m.base), m.size);
++    auto& e = g_entries[&m == &g_boot ? 0 : &m == &g_ova ? 1 : &m == &g_ovb ? 2 : 3];
++    e.clear();
++    for (uint32_t a = (uint32_t)offset; a < m.size; a += (uint32_t)stride) e.push_back({m.base + a, kFns[(a / stride) & 63]});
++    m.funcs = e.data(); m.nfuncs = (uint32_t)e.size();
++}
++
++SH2Func expected(const SH2Module& m, uint32_t addr) {
++    for (uint32_t i = 0; i < m.nfuncs; ++i) if (m.funcs[i].addr == addr) return m.funcs[i].fn;
++    return nullptr;
++}
++
++void bench_lookup(bool quick) {
++    image(g_ovb, 3, 0x40, 0x10);                 // B's image first: its CRC from its own bytes
++    std::vector<uint8_t> ovb(mem(g_ovb.base), mem(g_ovb.base) + g_ovb.size);
++    image(g_boot, 1, 0x20, 0);
++    image(g_ova, 2, 0x40, 0);
++    image(g_low, 4, 0x30, 0);
++    sh2_activate(&g_boot); sh2_activate(&g_low); sh2_activate(&g_ova);
++    // a trace: hot functions called again and again, as a game's main loop does
++    std::mt19937 rng(2026);
++    std::vector<uint32_t> hot;
++    for (int i = 0; i < 1500; ++i) {
++        const SH2Module& m = i % 3 == 0 ? g_boot : i % 3 == 1 ? g_ova : g_low;
++        hot.push_back(m.funcs[rng() % m.nfuncs].addr);
++    }
++    std::vector<uint32_t> trace(1 << 16);
++    std::geometric_distribution<int> pick(0.01);
++    for (auto& a : trace) a = hot[std::min<int>(pick(rng), (int)hot.size() - 1)];
++    for (uint32_t a : hot) {
++        const SH2Module& m = a >> 20 == 0x002 ? g_low : a < g_ova.base ? g_boot : g_ova;
++        if (sh2_lookup(a) != expected(m, a)) { fail("lookup: wrong function"); break; }
++    }
++    const long n = quick ? 2000000 : 40000000;
++    uintptr_t sink = 0;
++    auto t0 = Clock::now();
++    for (long i = 0; i < n; ++i) sink += (uintptr_t)sh2_lookup(trace[i & 0xFFFF]);
++    double ns = ms_since(t0) * 1e6 / n;
++    if (!sink) fail("lookup: nothing found");
++    g_rows.push_back({"lookup", "sh2_lookup, 1500 hot entries", "ns/lookup", 0, ns});
++    // An overlay loaded over A (by the module loader, DMA or the CPU): an address that was A's
++    // entry must now come from B, or from nothing, exactly as without the cache.
++    const uint32_t a_only = g_ova.base + 0x40;               // A's entry, not B's
++    const uint32_t b_only = g_ovb.base + 0x50;               // B's entry, not A's
++    if (sh2_lookup(a_only) != expected(g_ova, a_only)) fail("lookup: A before the swap");
++    std::memcpy(mem(g_ovb.base), ovb.data(), ovb.size());
++    if (sh2_lookup(a_only) != nullptr) fail("lookup: A's entry still found after B was loaded over it");
++    if (sh2_lookup(b_only) != expected(g_ovb, b_only)) fail("lookup: B's entry after the swap");
++    // a header byte overwritten in place: an unknown image, so nothing is trusted there
++    mem(g_ovb.base)[5] ^= 0xFF;
++    if (sh2_lookup(b_only) != nullptr) fail("lookup: an entry found in an overwritten image");
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    bool quick = false, markdown = false;
++    const char* json = nullptr;
++    for (int i = 1; i < argc; ++i) {
++        if (!std::strcmp(argv[i], "--quick")) quick = true;
++        else if (!std::strcmp(argv[i], "--markdown")) markdown = true;
++        else if (!std::strcmp(argv[i], "--json") && i + 1 < argc) json = argv[++i];
++        else { std::fprintf(stderr, "usage: runtime_bench [--quick] [--markdown] [--json FILE]\n"); return 2; }
++    }
++    bench_lookup(quick);
++    bench_vdp1(quick);
++    bench_vdp2(quick);
++    if (markdown) {
++        std::printf("| group | case | unit | reference path | fast path | speed-up |\n|---|---|---|---:|---:|---:|\n");
++        for (auto& r : g_rows)
++            if (r.base > 0) std::printf("| %s | %s | %s | %.3f | %.3f | %.2fx |\n", r.group.c_str(), r.name.c_str(), r.unit.c_str(), r.base, r.fast, r.base / r.fast);
++            else std::printf("| %s | %s | %s | | %.2f | |\n", r.group.c_str(), r.name.c_str(), r.unit.c_str(), r.fast);
++    } else {
++        for (auto& r : g_rows)
++            if (r.base > 0) std::printf("%-7s %-34s %9.3f -> %9.3f %-9s (%.2fx)\n", r.group.c_str(), r.name.c_str(), r.base, r.fast, r.unit.c_str(), r.base / r.fast);
++            else std::printf("%-7s %-34s %9s    %9.2f %-9s\n", r.group.c_str(), r.name.c_str(), "", r.fast, r.unit.c_str());
++    }
++    if (json) {
++        FILE* f = std::fopen(json, "w");
++        if (f) {
++            std::fprintf(f, "{\"quick\": %s, \"rows\": [", quick ? "true" : "false");
++            for (size_t i = 0; i < g_rows.size(); ++i)
++                std::fprintf(f, "%s{\"group\": \"%s\", \"case\": \"%s\", \"unit\": \"%s\", \"reference\": %.4f, \"fast\": %.4f}", i ? ", " : "",
++                             g_rows[i].group.c_str(), g_rows[i].name.c_str(), g_rows[i].unit.c_str(), g_rows[i].base, g_rows[i].fast);
++            std::fprintf(f, "], \"failures\": %d}\n", g_failures);
++            std::fclose(f);
++        }
++    }
++    if (g_failures) std::fprintf(stderr, "%d check(s) failed\n", g_failures);
++    return g_failures ? 1 : 0;
++}
+diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
+new file mode 100644
+index 0000000..fb24b1d
+--- /dev/null
++++ b/runtime/tests/vdp1_raster_test.cpp
+@@ -0,0 +1,84 @@
++// The native-framebuffer line walk (vdp1_raster.inc, line_native) against the general one it
++// stands in for: random command tables over random VRAM, drawn both ways, dot for dot.
++#include "test.h"
++#include "video.h"
++#include <cstring>
++#include <random>
++#include <vector>
++
++namespace {
++
++void be16(uint32_t a, uint16_t v) { g_vdp1_vram[a & 0x7FFFF] = (uint8_t)(v >> 8); g_vdp1_vram[(a + 1) & 0x7FFFF] = (uint8_t)v; }
++
++std::vector<uint16_t> draw(bool reference, uint16_t fbcr) {
++    vdp1_reference_raster(reference);
++    vdp1_reg_write(0x00, 0, 2);                          // TVMR: 16 bits a pixel
++    vdp1_reg_write(0x02, fbcr & 0x10, 2);                // FBCR: EOS for high speed shrink only
++    for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, (uint32_t)(i * 2654435761u >> 16), 2);
++    vdp1_reg_write(0x04, 1, 2);                          // PTMR 1: draw now
++    std::vector<uint16_t> fb(512 * 256);
++    for (int i = 0; i < 512 * 256; ++i) fb[i] = (uint16_t)vdp1_fb_read(i * 2, 2);
++    vdp1_reference_raster(false);
++    return fb;
++}
++
++// A table of `n` random commands after system clipping, user clipping and local coordinates.
++void random_table(std::mt19937& rng, int n) {
++    auto r = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
++    // textures, colour tables and Gouraud tables: values biased toward 0 and the end codes
++    for (uint32_t a = 0x10000; a < 0x80000; a += 2) {
++        int k = r(0, 15);
++        uint16_t v = k == 0 ? 0 : k == 1 ? 0x7FFF : k == 2 ? 0xFFFF : k == 3 ? 0xF0F0 : (uint16_t)r(0, 0xFFFF);
++        be16(a, v);
++    }
++    uint32_t a = 0;
++    auto cmd = [&](uint16_t ctrl, uint16_t pmod, uint16_t colr, uint16_t srca, uint16_t size, const int* xy, uint16_t grda) {
++        be16(a, ctrl); be16(a + 2, 0); be16(a + 4, pmod); be16(a + 6, colr); be16(a + 8, srca); be16(a + 10, size);
++        for (int i = 0; i < 8; ++i) be16(a + 12 + i * 2, (uint16_t)xy[i]);
++        be16(a + 28, grda); be16(a + 30, 0);
++        a += 0x20;
++    };
++    int z[8] = {};
++    int sys[8] = {0, 0, 0, 0, r(100, 511), r(60, 255), 0, 0};
++    cmd(0x0009, 0, 0, 0, 0, sys, 0);
++    int user[8] = {r(0, 200), r(0, 120), 0, 0, r(100, 400), r(60, 250), 0, 0};
++    cmd(0x0008, 0, 0, 0, 0, user, 0);
++    int local[8] = {r(-30, 60), r(-30, 60), 0, 0, 0, 0, 0, 0};
++    cmd(0x000A, 0, 0, 0, 0, local, 0);
++    (void)z;
++    for (int i = 0; i < n; ++i) {
++        int comm = r(0, 7);
++        uint16_t ctrl = (uint16_t)(comm | (r(0, 3) << 4) | (comm == 1 ? r(0, 15) << 8 : 0));
++        int cmode = r(0, 5);
++        uint16_t pmod = (uint16_t)(r(0, 7) | cmode << 3 | r(0, 1) << 6 | r(0, 1) << 7 | (r(0, 3) == 0) << 8 |
++                                   r(0, 1) << 9 | r(0, 1) << 10 | (r(0, 7) == 0) << 15 | r(0, 1) << 12);
++        uint16_t colr = (uint16_t)(cmode == 1 ? (0x10000 + r(0, 0x1000) * 32) / 8 : r(0, 0xFFFF));
++        uint16_t srca = (uint16_t)((0x10000 + r(0, 0x6000) * 8) / 8);
++        uint16_t size = (uint16_t)(r(1, 8) << 8 | r(1, 64));
++        int xy[8];
++        for (int k = 0; k < 8; ++k) xy[k] = r(0, 9) == 0 ? r(-400, 900) : r(-40, 360);
++        if (comm == 1 && (ctrl >> 8 & 15)) { xy[2] = r(-20, 200); xy[3] = r(-20, 200); }
++        for (int& v : xy) v &= 0x1FFF;
++        cmd(ctrl, pmod, colr, srca, size, xy, (uint16_t)((0x10000 + r(0, 0x1000) * 8) / 8));
++    }
++    be16(a, 0x8000);                                     // END
++}
++
++}  // namespace
++
++TEST(native_line_walk_draws_as_the_general_one) {
++    std::mt19937 rng(20261025);
++    int differing = 0, drawn = 0;
++    for (int round = 0; round < 60; ++round) {
++        std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);
++        random_table(rng, 40);
++        const uint16_t fbcr = (uint16_t)(round & 1 ? 0x10 : 0);
++        std::vector<uint16_t> fast = draw(false, fbcr), ref = draw(true, fbcr);
++        for (int i = 0; i < 512 * 256; ++i) {
++            differing += fast[i] != ref[i];
++            drawn += ref[i] != (uint16_t)(i * 2654435761u >> 16);
++        }
++    }
++    CHECK_EQ(differing, 0);
++    CHECK_EQ(drawn > 100000, true);
++}
+diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
+new file mode 100644
+index 0000000..472e126
+--- /dev/null
++++ b/runtime/tests/vdp1_steps_test.cpp
+@@ -0,0 +1,137 @@
++// VDP1's step arithmetic (vdp1_steps.h) against the rules of Sega's VDP1 User's Manual.
++#include "../src/video/vdp1_steps.h"
++#include "test.h"
++
++using namespace vdp1_steps;
++
++// Figure 1.6: x and y stepping the same way put the extra dot at (new x, old y).
++TEST(aa_corner_same_direction_is_new_x_old_y) {
++    auto a = aa_corner(10, 20, 1, 1);  CHECK_EQ(a.x, 11); CHECK_EQ(a.y, 20);
++    auto b = aa_corner(10, 20, -1, -1); CHECK_EQ(b.x, 9); CHECK_EQ(b.y, 20);
++}
++// Figure 1.6: opposite directions put it at (old x, new y).
++TEST(aa_corner_opposite_direction_is_old_x_new_y) {
++    auto a = aa_corner(10, 20, 1, -1);  CHECK_EQ(a.x, 10); CHECK_EQ(a.y, 19);
++    auto b = aa_corner(10, 20, -1, 1);  CHECK_EQ(b.x, 10); CHECK_EQ(b.y, 21);
++}
++TEST(mesh_draws_dots_with_equal_low_bits) {
++    CHECK_EQ(mesh_drawn(0, 0), true);  CHECK_EQ(mesh_drawn(1, 1), true);
++    CHECK_EQ(mesh_drawn(1, 0), false); CHECK_EQ(mesh_drawn(0, 3), false);
++    CHECK_EQ(mesh_drawn(-2, 4), true);
++}
++TEST(end_code_stops_the_line_at_the_second_read) {
++    EndCodes e;
++    CHECK_EQ(e.read(false, true), true);
++    CHECK_EQ(e.read(true, true), true);   // first end code: transparent, line goes on
++    CHECK_EQ(e.read(true, false), true);  // the same texel again (enlarged): not a new read
++    CHECK_EQ(e.read(false, true), true);
++    CHECK_EQ(e.read(true, true), false);  // second end code: stop
++    CHECK_EQ(e.read(false, true), false);
++}
++// Texture columns map the character's first and last columns on the line's ends.
++TEST(column_maps_corners_to_ends) {
++    CHECK_EQ(column(0, 16, 15), 0);
++    CHECK_EQ(column(15, 16, 15), 15);
++    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15), k);   // 1:1 is the identity
++    CHECK_EQ(column(31, 16, 31), 15);                              // enlarged x2
++    CHECK_EQ(column(7, 16, 7), 15);                                // reduced to 8 dots
++    CHECK_EQ(column(0, 16, 7), 1);                                 // its dots' centres
++    CHECK_EQ(column(0, 8, 0), 4);                                  // one dot: the middle
++}
++// A flipped character is sampled as the unflipped one turned around (drawing order returned).
++TEST(flipped_columns_mirror_the_unflipped_sampling) {
++    for (int len = 0; len < 40; ++len)
++        for (int w = 1; w <= 33; ++w)
++            for (int k = 0; k <= len; ++k)
++                CHECK_EQ(column(k, w, len, true), w - 1 - column(len - k, w, len));
++    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15, true), k);   // 1:1 still the identity
++    CHECK_EQ(column(0, 8, 0, true), 3);                                   // one dot: the other middle
++    // the flipped 48 -> 45 shrink: centres on texel boundaries go toward the first texel
++    CHECK_EQ(column(7, 48, 44), 8); CHECK_EQ(column(7, 48, 44, true), 7);
++}
++TEST(exact_halves_round_down_unflipped_and_up_flipped) {
++    // 3 texels over 5 dots: k*(2)/4 has halves at k=1 and k=3
++    CHECK_EQ(column(1, 3, 4), 0); CHECK_EQ(column(3, 3, 4), 1);
++    CHECK_EQ(column(1, 3, 4, true), 1); CHECK_EQ(column(3, 3, 4, true), 2);
++    CHECK_EQ(row(1, 3, 4), 0);    CHECK_EQ(row(3, 3, 4), 1);
++    CHECK_EQ(row(4, 3, 4), 2);
++    CHECK_EQ(row(1, 32, 5), 3 * 32 / 12); CHECK_EQ(row(1, 32, 5, true), 7);   // shrink: 8 -> 7 flipped
++}
++TEST(edge_walk_hits_both_vertices_and_rounds_halves_down) {
++    CHECK_EQ(edge(5, 9, 0, 4), 5); CHECK_EQ(edge(5, 9, 4, 4), 9);
++    CHECK_EQ(edge(0, 1, 1, 2), 0);   // 0.5 -> 0
++    CHECK_EQ(edge(0, -1, 1, 2), -1); // -0.5 -> -1
++    CHECK_EQ(edge(0, 3, 1, 2), 1);   // 1.5 -> 1
++    CHECK_EQ(edge(7, 7, 3, 0), 7);
++}
++TEST(gouraud_steps_like_a_texture) {
++    // 32 values over 5 dots: more values than dots, so the centres (2k + 1) * 32 / 10
++    CHECK_EQ(shade(0, 31, 0, 4), 3);  CHECK_EQ(shade(0, 31, 1, 4), 9);
++    CHECK_EQ(shade(0, 31, 3, 4), 22); CHECK_EQ(shade(0, 31, 4, 4), 28);
++    // a falling run is the rising one turned around
++    for (int k = 0; k <= 4; ++k) CHECK_EQ(shade(31, 0, k, 4), shade(0, 31, 4 - k, 4));
++    // fewer values than dots: corner to corner, halves down
++    CHECK_EQ(shade(16, 18, 0, 8), 16); CHECK_EQ(shade(16, 18, 8, 8), 18);
++    CHECK_EQ(shade(16, 18, 2, 8), 16); CHECK_EQ(shade(16, 18, 6, 8), 17);
++    CHECK_EQ(shade(7, 7, 3, 9), 7);
++}
++TEST(quad_sides_step_over_their_own_length) {
++    // a side of 4 dots walked in 5 steps: ends on both vertices, 2.4 -> 2
++    CHECK_EQ(side_step(0, 4, 5, 4), 0); CHECK_EQ(side_step(5, 4, 5, 4), 4);
++    CHECK_EQ(side_step(3, 4, 5, 4), 2);
++    // an exact half goes toward the smaller major coordinate: 52 dots in 56 steps, step 7 is 6.5
++    CHECK_EQ(side_step(7, 52, 56, 52), 6);   // rising side: down
++    CHECK_EQ(side_step(7, 52, 56, -52), 7);  // falling side: up, i.e. further toward the minus end
++    CHECK_EQ(side_point(-5, -4, 6, 52), -5); CHECK_EQ(side_point(-107, -55, 6, 52), -101);
++    CHECK_EQ(side_point(10, -42, 7, 52), 3);
++    CHECK_EQ(side_step(0, 0, 9, 0), 0);
++}
++
++// High speed shrink steps over column pairs and takes one parity of the stored character.
++TEST(high_speed_shrink_samples_one_parity_of_stored_columns) {
++    for (int len = 0; len < 15; ++len)
++        for (int k = 0; k <= len; ++k) {
++            CHECK_EQ(hss_column(k, 16, len, false, 0) % 2, 0);
++            CHECK_EQ(hss_column(k, 16, len, false, 1) % 2, 1);
++            // flipped: the stored column (15 - drawn) keeps the parity
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 0)) % 2, 0);
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 1)) % 2, 1);
++        }
++    // 48 wide on 32 dots (the church wall): 24 pairs enlarged onto 32 dots, every pair used
++    bool used[24] = {};
++    for (int k = 0; k < 32; ++k) used[hss_column(k, 48, 31, false, 0) / 2] = true;
++    for (bool u : used) CHECK_EQ(u, true);
++    // 48 wide on 8 dots: pairs sampled at the dots' centres, (2k + 1) * 24 / 16
++    CHECK_EQ(hss_column(0, 48, 7, false, 0), 2);
++    CHECK_EQ(hss_column(7, 48, 7, false, 1), 2 * 22 + 1);
++    // a flipped 16-wide character on 4 dots, eos 0: the 8 pairs shrink onto 4 dots at centres
++    // 1,3,5,7 counted from the flipped end, i.e. stored pairs 7,5,3,1 (columns 14,10,6,2),
++    // which the flip draws at 1,5,9,13
++    CHECK_EQ(hss_column(0, 16, 3, true, 0), 1);
++    CHECK_EQ(hss_column(1, 16, 3, true, 0), 5);
++    CHECK_EQ(hss_column(3, 16, 3, true, 0), 13);
++    CHECK_EQ(hss_column(0, 15, 3, false, 1), 1);
++    CHECK_EQ(hss_column(5, 1, 3, false, 1), 0);   // no pair: column 0
++}
++// Shrinking samples under the dot's centre; enlarging maps corner to corner.
++TEST(shrink_samples_at_dot_centres) {
++    for (int q = 0; q < 8; ++q) CHECK_EQ(shrink_sample(q, 16, 7), 2 * q + 1);
++    CHECK_EQ(shrink_sample(0, 48, 31), 0);  CHECK_EQ(shrink_sample(31, 48, 31), 47);
++    CHECK_EQ(shrink_sample(1, 48, 31), 2);  // 1.5 * 48 / 32 = 2.25
++    CHECK_EQ(shrink_sample(0, 5, 0), 2);    // one dot: the middle texel
++    CHECK_EQ(column(3, 16, 7), 7);          // shrunk columns sample centres
++    CHECK_EQ(row(3, 16, 7), 7);             // and so do rows
++    CHECK_EQ(row(1, 3, 4), 0);              // enlarged rows: corner to corner, halves down
++    CHECK_EQ(row(1, 3, 4, true), 1);        // a vertically flipped one rounds halves up
++    CHECK_EQ(row(3, 3, 4, true), 2);
++    CHECK_EQ(row(2, 3, 4, true), 1);
++    CHECK_EQ(row(3, 16, 7, true), 6);       // shrunk rows mirror too: a centre on a boundary goes up
++    CHECK_EQ(column(1, 3, 4), 0);           // enlarged columns: halves down too
++}
++// An anti-aliasing dot takes the next step's texel and colour, never past the line's end.
++TEST(aa_dot_takes_the_next_step) {
++    CHECK_EQ(aa_step(0, 5), 1);
++    CHECK_EQ(aa_step(4, 5), 5);
++    CHECK_EQ(aa_step(5, 5), 5);
++    CHECK_EQ(aa_step(0, 0), 0);
++}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
