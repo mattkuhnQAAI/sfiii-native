@@ -1,0 +1,99 @@
+name: Linux native host
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: linux-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host:
+    # Builds the SDL native host from the synthetic SH-2 fixture with the system
+    # toolchain. No disc, BIOS, extracted asset, save or generated game program.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang libgl1-mesa-dev libegl1-mesa-dev libdrm-dev libgbm-dev libdecor-0-dev libibus-1.0-dev libxinerama-dev libxv-dev libxxf86vm-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libvulkan-dev mesa-vulkan-drivers xvfb xauth
+      - name: Pinned SDL revision
+        id: pins
+        run: echo "sdl=$(python3 -c "import json;print(json.load(open('desktop/posix-dependencies.json'))['git']['sdl']['commit'])")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: sdl-cache
+        with:
+          path: ${{ runner.temp }}/sdl
+          key: linux-native-sdl-${{ steps.pins.outputs.sdl }}-ubuntu-24.04
+      - name: Build pinned SDL
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        env:
+          SDL_COMMIT: ${{ steps.pins.outputs.sdl }}
+        run: |
+          src="$RUNNER_TEMP/sdl-src"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://github.com/libsdl-org/SDL.git "$SDL_COMMIT"
+          git -C "$src" checkout -q --detach FETCH_HEAD
+          cmake -S "$src" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/sdl"
+          cmake --build "$RUNNER_TEMP/sdl-build" --parallel 4
+          cmake --install "$RUNNER_TEMP/sdl-build"
+      - name: Fetch pinned runtime, apply project changes and compile shaders
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, os, subprocess, tarfile, urllib.request
+          from pathlib import Path
+          spec = json.loads(Path('dependencies.json').read_text())['runtime']
+          target = Path('.local') / spec['directory']
+          target.mkdir(parents=True)
+          def git(*args):
+              subprocess.run(['git', '-C', str(target), *args], check=True)
+          git('init', '-q')
+          git('fetch', '-q', '--depth', '1', spec['url'], spec['commit'])
+          git('checkout', '-q', '--detach', 'FETCH_HEAD')
+          git('apply', str(Path('tools/runtime-diagnostics.patch').resolve()))
+          root = Path(os.environ['RUNNER_TEMP'])/'dxc'; root.mkdir()
+          dxc = json.loads(Path('desktop/posix-dependencies.json').read_text())['dxc']
+          archive = root/'dxc.tar.gz'
+          urllib.request.urlretrieve(dxc['url'], archive)
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == dxc['sha256']
+          with tarfile.open(archive) as t: t.extractall(root, filter='data')
+          out = Path(os.environ['RUNNER_TEMP'])/'shaders'; out.mkdir()
+          for name in ['geometry', 'hd-assets']:
+              subprocess.run([str(root/'bin/dxc'), '-T', 'ps_6_0', '-E', 'main', '-O3', '-spirv', '-fspv-target-env=vulkan1.0',
+                              f'native/{name}.hlsl', '-Fo', str(out/(name+'.spv'))], check=True,
+                             env={**os.environ, 'LD_LIBRARY_PATH': str(root/'lib')})
+          PY
+      - name: Generate the synthetic instruction fixture
+        run: |
+          src="$RUNNER_TEMP/host-src"
+          python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1])
+          from saturnrecomp.recomp.__main__ import generate
+          generate([], sys.argv[2], optest=True, native_states=True)' .local/saturn-recomp/src "$src"
+          # ISA vectors never request snapshots; abort if one is requested.
+          printf '%s\n' '#include "saturn/sh2.h"' '#include <cstdlib>' 'std::atomic<bool> g_state_requested{false};' 'void state_native_point(SH2Context&,uint32_t){std::abort();}' > "$src/state-stub.cpp"
+          printf '\n%s\n' 'target_sources(selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/state-stub.cpp")' >> "$src/CMakeLists.txt"
+      - name: Build native host and self-tests
+        run: |
+          cmake -S "$RUNNER_TEMP/host-src" -B "$RUNNER_TEMP/host" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSATURN_VDP1_GPL=OFF "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime" "-DSATURN_EXTRA=$GITHUB_WORKSPACE/tools/windows.cmake" "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/sdl" "-DSF3_PRECOMPILED_SHADERS=$RUNNER_TEMP/shaders" "-DCMAKE_BUILD_RPATH=$RUNNER_TEMP/sdl/lib"
+          cmake --build "$RUNNER_TEMP/host" --parallel 4 --target saturn selftest controller_setup controller_selftest replay_checkpoint gpu_renderer_selftest replay_ui_selftest native_state_ui_selftest
+      - name: Run synthetic host checks
+        run: |
+          cd "$RUNNER_TEMP/host"
+          ./selftest "$RUNNER_TEMP/host-src/selftest/optest.txt"
+          set +e; ./saturn --help > usage.txt 2>&1; code=$?; set -e
+          test "$code" = 2 && grep -q 'usage: saturn --cue' usage.txt
+          SDL_VIDEODRIVER=dummy ./controller_selftest
+          ui="$RUNNER_TEMP/ui"; mkdir -p "$ui/seed"
+          echo '{}' > "$ui/seed/context.json"; echo synthetic > "$ui/seed/build-id.txt"; echo synthetic > "$ui/seed/disc-id.txt"; : > "$ui/seed/backup.bin"
+          export SF3_CONTROLLER_DIR="$ui" SF3_REPLAY_ROOT="$ui/points" SF3_REPLAY_SEED="$ui/seed"
+          SDL_VIDEODRIVER=dummy ./replay_ui_selftest "$ui/replay"
+          SDL_VIDEODRIVER=dummy ./native_state_ui_selftest "$ui/native-states"
+      - name: GPU shader cases on software Vulkan (lavapipe; not hardware validation)
+        run: |
+          cd "$RUNNER_TEMP/host"
+          SF3_GPU_BACKEND=vulkan SF3_GPU_ALLOW_SOFTWARE=1 xvfb-run -a ./gpu_renderer_selftest "$RUNNER_TEMP/gpu" ./shaders
+      # Real disc inventories, generated game code and gameplay fixtures stay local.

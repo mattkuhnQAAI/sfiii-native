@@ -51,7 +51,7 @@ class DesktopTests(unittest.TestCase):
             for selected in (1,2,3):
                 for actual in (1,2,3):
                     if selected==actual:continue
-                    with self.subTest(selected=selected,actual=actual),patch.object(worker,'PAYLOAD',payload),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',return_value={'scenario':actual}),contextlib.redirect_stdout(io.StringIO()):
+                    with self.subTest(selected=selected,actual=actual),patch.object(worker,'PAYLOAD',payload),patch.object(worker,'PACKAGE',root/'app'),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',return_value={'scenario':actual}),contextlib.redirect_stdout(io.StringIO()):
                         with self.assertRaisesRegex(ValueError,'Scenario '+str(actual)):worker.prepare(root/'fake.cue',work,selected)
             self.assertEqual((work/'native-build.txt').read_text(),'build-preserved')
 
@@ -61,7 +61,7 @@ class DesktopTests(unittest.TestCase):
             (payload/'package.json').write_text(json.dumps({'build_id':'synthetic'}))
             (root/'fake.cue').touch();(work/'game.json').write_text(json.dumps({'cue':'old.cue'}))
             (work/'experimental-backup.bin').write_bytes(b'preserved')
-            with patch.object(worker,'PAYLOAD',payload),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',side_effect=[{'scenario':2,'id':'new'},{'scenario':1,'id':'old'}]),contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(worker,'PAYLOAD',payload),patch.object(worker,'PACKAGE',root/'app'),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',side_effect=[{'scenario':2,'id':'new'},{'scenario':1,'id':'old'}]),contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(ValueError,'another game revision'):worker.prepare(root/'fake.cue',work,2)
             self.assertEqual((work/'experimental-backup.bin').read_bytes(),b'preserved')
 

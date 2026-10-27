@@ -198,7 +198,7 @@ def main():
         executable.parent.mkdir()
         script+='BASE="$HERE/../Resources"\n'
         plist=dict(CFBundleExecutable='SFIII Native',CFBundleIdentifier='org.sfiii.native.preview',CFBundleName='SFIII Native',
-                   CFBundleVersion='0.4.0',CFBundleShortVersionString='0.4.0',CFBundlePackageType='APPL',LSMinimumSystemVersion='13.0',NSHighResolutionCapable=True)
+                   CFBundleVersion=lock['version'].split('-')[0],CFBundleShortVersionString=lock['version'].split('-')[0],CFBundlePackageType='APPL',LSMinimumSystemVersion='13.0',NSHighResolutionCapable=True)
         with (package/'Contents/Info.plist').open('wb') as f:plistlib.dump(plist,f)
     else:
         executable=package/'SFIII Native.sh'

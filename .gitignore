@@ -13,6 +13,7 @@
 !/.github/workflows/
 !/.github/workflows/portable.yml
 !/.github/workflows/synthetic.yml
+!/.github/workflows/linux-native.yml
 !/LICENSES/
 /LICENSES/*
 !/LICENSES/saturn-recomp.txt
