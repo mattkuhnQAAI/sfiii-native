@@ -1,8 +1,8 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..72b2ee6 100644
+index 1219a02..9bbb945 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
-@@ -11,6 +11,7 @@
+@@ -11,9 +11,11 @@
  // Semantics are src/saturnrecomp/sh2emu.py's, instruction for instruction: the
  // self-test (runtime/src/app/selftest.cpp) holds the two together.
  #pragma once
@@ -10,10 +10,36 @@ index 1219a02..72b2ee6 100644
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
-@@ -60,6 +61,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
++#include <cstdlib>
+ 
+ #define SH2_UNLIKELY(x) __builtin_expect(!!(x), 0)
+ 
+@@ -22,7 +24,7 @@ struct SH2Context {
+     uint32_t t, s, q, m, imask;         // SR, a field each
+     uint32_t gbr, vbr, mach, macl, pr;
+     uint32_t pc;                        // where the last rts/rte went: the caller checks it
+-    int32_t  budget;                    // safe points left before sh2_poll
++    int32_t  budget;                    // time left before sh2_poll, in quarter SH-2 cycles
+     int      cpu;                       // 0 master, 1 slave
+ };
+ 
+@@ -59,7 +61,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
+ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
- #define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
+-#define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
++// Time is charged per block (SH2_CYC); a safe point (SH2_SAFE)
++// polls when it is spent.
++#define SH2_SAFE(c) do { if (SH2_UNLIKELY((c).budget < 0)) sh2_poll(c); } while (0)
++// Code generated before the cycle model (no SH2_CYC) still builds and runs: its
++// safe points charge the old flat 400 ns (46 quarter cycles) each.
++#define SH2_POLL(c) do { if (SH2_UNLIKELY(((c).budget -= 46) < 0)) sh2_poll(c); } while (0)
++// A block's cost: n issue cycles and m memory accesses (each g_sh2_mem_q
++// quarter cycles: the average wait the cache and the bus add).
++// SF3_MEM_Q=N overrides it (default 8: two cycles of average wait per access,
++// fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
++inline int32_t g_sh2_mem_q = [] { const char* v = std::getenv("SF3_MEM_Q"); return v ? (int32_t)std::atol(v) : 8; }();
++#define SH2_CYC(c, n, m) ((c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
 +extern std::atomic<bool> g_state_requested;
 +extern const bool g_sh2_native_states;
 +void state_native_point(SH2Context& c, uint32_t pc);
@@ -22,7 +48,7 @@ index 1219a02..72b2ee6 100644
  #define SH2_RET(c, a) do { if (SH2_UNLIKELY((c).pc != (a))) sh2_bad_return(c, a); } while (0)
  
 diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
-index ecf1dde..4a9e784 100644
+index ecf1dde..86a21a6 100644
 --- a/runtime/runtime.cmake
 +++ b/runtime/runtime.cmake
 @@ -27,6 +27,7 @@ option(SATURN_VDP1_GPL "draw VDP1's shapes by Mednafen's rules, making the build
@@ -41,6 +67,16 @@ index ecf1dde..4a9e784 100644
  set(_m68k ${_rt}/third_party/musashi)
  add_library(saturn_m68k STATIC
      ${_m68k}/m68kcpu.c ${_m68k}/m68kops.c ${_m68k}/m68kdasm.c ${_m68k}/softfloat/softfloat.c
+@@ -63,6 +63,9 @@ add_library(saturn_m68k STATIC
+ target_include_directories(saturn_m68k PUBLIC ${_m68k})
+ target_include_directories(saturn_machine PRIVATE ${_rt}/third_party/minicoro)
+ target_compile_options(saturn_m68k PRIVATE -w)
++# the sound CPU's bus timing (sound.cpp): fetches apart from data, a hook per instruction, the
++# interrupt acknowledge
++target_compile_definitions(saturn_m68k PRIVATE M68K_SEPARATE_READS=1 M68K_INSTRUCTION_HOOK=1 M68K_EMULATE_INT_ACK=1)
+ target_link_libraries(saturn_machine PUBLIC saturn_m68k)
+ if(WIN32)
+   target_link_libraries(saturn_machine PUBLIC ws2_32)   # the modem's TCP line
 diff --git a/runtime/src/app/main.cpp b/runtime/src/app/main.cpp
 index 566fcfd..d5bb5fc 100644
 --- a/runtime/src/app/main.cpp
@@ -1412,10 +1448,27 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..2055f4c 100644
+index a17d926..c762472 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
-@@ -46,6 +46,7 @@
+@@ -1,11 +1,11 @@
+ // saturn-recomp runtime — the machine: the run loop, time, interrupts taken by a
+ // CPU, the slave SH-2, and program starts.
+ //
+-// Time. The recompiled code has no cycle counts; it has safe points (loop
+-// back-edges, calls, `ldc ...,sr`). Every kBudget safe points the master
+-// polls: time moves on, the devices run, interrupts are taken. Time is
+-// virtual by default (kNsPerSafePoint per safe point: a run is the same run
+-// every time) or the host's clock (`realtime`).
++// Time. Each recompiled block charges its SH-2 cycles to the CPU's budget;
++// safe points (loop back-edges, calls, `ldc ...,sr`) check it. When kBudget
++// is spent the master polls: time moves on by what was spent, the devices
++// run, interrupts are taken. Time is virtual by default (a run is the same
++// run every time) or the host's clock (`realtime`).
+ //
+ // Interrupts are taken at a poll, as the CPU would between two instructions:
+ // SR and a return PC pushed on the guest stack, the mask raised to the
+@@ -46,13 +46,29 @@
  #include <mutex>
  #include <thread>
  #include <vector>
@@ -1423,7 +1476,51 @@ index a17d926..2055f4c 100644
  
  SaturnConfig g_cfg;
  SH2Context g_master, g_slave;
-@@ -72,9 +73,26 @@ uint64_t sat_now() {
+ SH2Context* g_cpu = &g_master;
+ 
+-static const int32_t kBudget = 256;             // safe points between polls
+-static const uint64_t kNsPerSafePoint = 400;    // virtual time: ~11 instructions at 28.6 MHz
++// The CPU's time is counted in quarter SH-2 cycles: each recompiled block
++// charges its instructions' cycles (the SH-2 manual's issue counts) and its
++// memory accesses (g_sh2_mem_q each); a device register access adds its bus's
++// wait (mmio.cpp). A poll turns what was spent into virtual time.
++static const int32_t kBudget = 4 * 2932;        // between polls: ~102 us, as 256 safe points of 400 ns were
++// The SH-2s run at φ: 26.87 MHz after a reset and SMPC's CKCHG320, 28.64 MHz after CKCHG352
++// (onchip_set_clock). SF3_PS_PER_CYCLE=N fixes the cycle at N ps instead (the old model ran at
++// 28.6364 MHz, 34921 ps, in both modes); SF3_CPU_CLOCK=352 keeps 352's rate at every width.
++// The quarter cycles per memory access are g_sh2_mem_q (SF3_MEM_Q, sh2.h).
++static const uint64_t kPsFixed = [] {
++    if (const char* c = std::getenv("SF3_CPU_CLOCK")) if (std::atol(c) == 352) return 34921ull;
++    const char* v = std::getenv("SF3_PS_PER_CYCLE");
++    const long n = v ? std::atol(v) : 0;
++    return n > 0 ? (uint64_t)n : 0ull;
++}();
++static inline uint64_t ps_per_cycle() { return kPsFixed ? kPsFixed : onchip_ps_per_cycle(); }
++static uint64_t quarters_ns(int64_t q) { return q > 0 ? (uint64_t)q * ps_per_cycle() / 4000 : 0; }
+ static const uint32_t kIntPC = 0xFFFFFFE4u;     // the PC an interrupt pushes: where rte must go
+ static const int kSlaveSlice = 64;              // polls the slave runs before it gives the CPU back
+ 
+@@ -61,6 +77,19 @@ struct RunStop {};
+ struct SlaveReset {};
+ 
+ static uint64_t g_vtime;                        // virtual ns
++// The master's slice: kBudget quarter cycles from g_vtime, or less so that it ends at the next
++// VBlank edge (video_next_vblank_edge_ns), where its poll raises the interrupt and takes it, as the
++// hardware does, not up to a slice (~100 us) later. A function of g_vtime alone, so a state's slice
++// is worked out again on load. SF3_POLL_EDGE=0: always kBudget.
++static int32_t g_slice;
++static int32_t slice_at(uint64_t t) {
++    static const bool on = [] { const char* v = std::getenv("SF3_POLL_EDGE"); return !v || *v != '0'; }();
++    if (!on || g_cfg.realtime) return kBudget;
++    const uint64_t q = (video_next_vblank_edge_ns(t) - t) * 4000 / ps_per_cycle() + 1;
++    return q < (uint64_t)kBudget ? (int32_t)q : kBudget;
++}
++static int32_t master_slice() { if (!g_slice) g_slice = slice_at(g_vtime); return g_slice; }
++static int32_t new_slice() { return g_slice = slice_at(g_vtime); }
+ static std::chrono::steady_clock::time_point g_t0;
+ static int g_starts;
+ 
+@@ -72,9 +101,26 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -1453,7 +1550,7 @@ index a17d926..2055f4c 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +320,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +348,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -1490,7 +1587,7 @@ index a17d926..2055f4c 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +364,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +392,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -1498,7 +1595,7 @@ index a17d926..2055f4c 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +382,8 @@ static std::condition_variable g_cv;
+@@ -333,6 +410,8 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
@@ -1507,7 +1604,7 @@ index a17d926..2055f4c 100644
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +417,14 @@ static void slave_main() {
+@@ -366,6 +445,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -1522,7 +1619,7 @@ index a17d926..2055f4c 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +480,29 @@ static void watch_for_stalls() {
+@@ -421,7 +508,29 @@ static void watch_for_stalls() {
      }
  }
  
@@ -1553,7 +1650,7 @@ index a17d926..2055f4c 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -446,7 +527,7 @@ void slave_off() {
+@@ -446,7 +555,7 @@ void slave_off() {
  void slave_idle_check(uint32_t ftcsr) {
      if (g_cpu->cpu != 1 || (ftcsr & 0x80)) return;
      g_slave_idle = true;
@@ -1562,7 +1659,7 @@ index a17d926..2055f4c 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +541,26 @@ void slave_kick() {
+@@ -460,16 +569,27 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -1582,6 +1679,7 @@ index a17d926..2055f4c 100644
      s(g_cfg.clock);
      s(g_cfg.multitap);
      s(g_master);
++    if (s.loading) g_slice = 0;                 // worked out again from g_vtime on its first use
 +    s(g_slave), s(g_slave_on), s(g_slave_idle), s(g_slave_polls);
 +    if (s.loading && g_slave_on) {
 +        if (g_slave_thread) state_fail("load requires a fresh process");
@@ -1592,7 +1690,7 @@ index a17d926..2055f4c 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +581,30 @@ static void write_coverage(const std::string& path) {
+@@ -490,6 +610,30 @@ static void write_coverage(const std::string& path) {
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
  }
  
@@ -1623,8 +1721,19 @@ index a17d926..2055f4c 100644
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
  // killed rather than stopped still leaves what it ran.
  static void checkpoint_due() {
-@@ -531,7 +646,9 @@ void master_poll_devices() {
+@@ -512,6 +656,7 @@ static void checkpoint_due() {
+ static const int kModemLine = 12;
+ 
+ void master_poll_devices() {
++    BusQuiet quiet;
+     uint64_t now = sat_now();
+     video_tick(now);
+     writes_due();
+@@ -529,16 +674,20 @@ void master_poll_devices() {
+ }
+ 
  void sh2_poll(SH2Context& c) {
++    const int32_t used = c.budget;
      c.budget = kBudget;
      if (c.cpu == 1) {
 -        if (++g_slave_polls >= kSlaveSlice) to_master();
@@ -1634,7 +1743,41 @@ index a17d926..2055f4c 100644
          return;
      }
      g_poll_ring[g_poll_pos++ % 4096] = __builtin_return_address(0);
-@@ -658,7 +775,7 @@ int saturn_main(const SaturnConfig& cfg) {
+-    g_vtime += kBudget * kNsPerSafePoint;
++    g_vtime += quarters_ns((int64_t)master_slice() - used);
+     master_poll_devices();
+     scu_deliver(c);
+     onchip_deliver(c);
++    c.budget = new_slice();
+ }
+ 
+ static int g_int_depth;
+@@ -568,10 +717,14 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+ }
+ 
+ void sh2_sleep(SH2Context& c, uint32_t pc) {
+-    // wait for an interrupt: time passes until one is taken
++    // wait for an interrupt: time passes until one is taken. What the master had spent of its
++    // slice is time already passed, so it goes in first (the sleep starts at the SLEEP's cycle,
++    // and sat_now_cpu() reads sat_now() while it sleeps).
++    if (&c == &g_master) { g_vtime += quarters_ns((int64_t)master_slice() - c.budget); c.budget = new_slice(); }
+     for (int i = 0; i < 100000; ++i) {
+-        g_vtime += kBudget * kNsPerSafePoint;
++        g_vtime += quarters_ns(&c == &g_master ? master_slice() : kBudget);
+         master_poll_devices();
++        if (&c == &g_master) c.budget = new_slice();
+         if (scu_deliver(c) | onchip_deliver(c)) return;
+     }
+     sat_fatal("sleep at %08X: nothing woke it", pc);
+@@ -644,6 +797,7 @@ int saturn_main(const SaturnConfig& cfg) {
+     }
+     g_master = SH2Context{};
+     g_master.budget = kBudget;
++    g_slice = kBudget;
+     video_init();
+     sound_init();
+     cd_init();
+@@ -658,7 +812,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -1643,11 +1786,116 @@ index a17d926..2055f4c 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
+@@ -704,3 +858,11 @@ int saturn_main(const SaturnConfig& cfg) {
+     std::fflush(stdout);
+     std::_Exit(0);                  // the slave's thread is parked: do not wait for it
+ }
++
++// The master's budget counts down from kBudget (quarter cycles) between polls, and g_vtime is the
++// time its slice began: what it has spent is time already passed, and the poll adds all of it
++// (an overspent budget too), so this never runs ahead of the next poll's time.
++uint64_t sat_now_cpu() {
++    if (g_cfg.realtime || g_cpu != &g_master) return sat_now();
++    return g_vtime + quarters_ns((int64_t)master_slice() - g_master.budget);
++}
+diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
+index b9dd332..74fb8a7 100644
+--- a/runtime/src/machine/mmio.cpp
++++ b/runtime/src/machine/mmio.cpp
+@@ -19,6 +19,7 @@
+ #include "modem.h"
+ #include "state.h"
+ #include <cstdio>
++#include <cstdlib>
+ #include <map>
+ #include <set>
+ #include <tuple>
+@@ -43,12 +44,47 @@ static std::map<std::pair<uint32_t, uint32_t>, uint64_t> g_calls;
+ struct ModemLog { uint64_t n = 0, first = 0, last = 0; std::set<uint32_t> values; };
+ static std::map<std::tuple<uint32_t, char, uint32_t>, ModemLog> g_modem_log;
+ 
+-// A register access costs the CPU a safe point of time: a loop that waits on a
+-// device (a status register, the CD block's answers) lets time move on.
+ static void log_reg(uint32_t a, int size, char rw) {
+     ++g_regs[{a, size, rw}];
+-    --g_cpu->budget;
+ }
++
++// What an access outside the work RAMs costs the CPU beyond its issue cycle:
++// the wait states of the bus it goes over, in SH-2 cycles (read, write). A
++// loop that waits on a device (a status register, the CD block's answers)
++// lets time move on by them. Estimates for the bus paths (on-chip modules;
++// the SCU's own registers; the A-bus with the CD block and the BIOS ROM; the
++// B-bus behind the SCU with VDP1, VDP2 and the SCSP; the SMPC), calibrated as
++// a whole against a reference emulator. SF3_BUS_WAITS="onchip,scu,abus,vdp1,
++// vdp2,scsp,smpc" overrides the reads, each with the write as R/W (e.g. 12/8).
++enum Bus { kOnchip, kScu, kAbus, kVdp1, kVdp2, kScsp, kSmpc, kBuses };
++struct Waits { int32_t q[kBuses][2]; };
++static Waits make_waits() {
++    Waits w{};
++    static const int32_t def[kBuses][2] = {{3, 3}, {4, 4}, {12, 12}, {10, 6}, {10, 6}, {16, 12}, {12, 12}};
++    for (int i = 0; i < kBuses; ++i) for (int k = 0; k < 2; ++k) w.q[i][k] = def[i][k] * 4;
++    if (const char* v = std::getenv("SF3_BUS_WAITS")) {
++        for (int i = 0; i < kBuses && *v; ++i) {
++            char* e;
++            long r = std::strtol(v, &e, 10), wr = r;
++            if (*e == '/') wr = std::strtol(e + 1, &e, 10);
++            w.q[i][0] = (int32_t)(r * 4); w.q[i][1] = (int32_t)(wr * 4);
++            v = *e == ',' ? e + 1 : e;
++        }
++    }
++    return w;
++}
++static const Waits g_waits = make_waits();
++static Bus bus_of(uint32_t a) {
++    if (a >= 0xFFFFFE00u) return kOnchip;
++    if (a >= 0x05FE0000u && a < 0x05FF0000u) return kScu;
++    if (a >= 0x05A00000u && a < 0x05C00000u) return kScsp;
++    if (a >= 0x05C00000u && a < 0x05E00000u) return kVdp1;
++    if (a >= 0x05E00000u && a < 0x05FE0000u) return kVdp2;
++    if (a >= 0x00100000u && a < 0x00180000u) return kSmpc;
++    return kAbus;
++}
++
++static inline void bus_wait(uint32_t a, char rw) { if (!g_bus_quiet) g_cpu->budget -= g_waits.q[bus_of(a)][rw == 'W']; }
+ // --watch LO:HI: every address in the range, one by one
+ static std::map<std::pair<uint32_t, char>, uint64_t> g_watch;
+ static uint32_t g_watch_lo = 1, g_watch_hi = 0;
+@@ -129,6 +165,7 @@ static int uart_register(uint32_t a, int size) {
+ }
+ 
+ uint32_t sh2_mmio_read(uint32_t a, int size) {
++    bus_wait(a, 'R');
+     if (a >= 0xFFFFFE00u) { log_reg(a, size, 'R'); return onchip_read(*g_cpu, a, size); }
+     uint32_t area = a >> 29;
+     if (area == 6) { log_area("cache data array", a, 'R'); return mem_rd(g_cache[g_cpu->cpu], a & 0xFFF, size); }
+@@ -158,6 +195,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+ }
+ 
+ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
++    bus_wait(a, 'W');
+     if (a >= 0xFFFFFE00u) { log_reg(a, size, 'W'); onchip_write(*g_cpu, a, v, size); return; }
+     uint32_t area = a >> 29;
+     if (area == 6) { log_area("cache data array", a, 'W'); mem_wr(g_cache[g_cpu->cpu], a & 0xFFF, v, size); return; }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
-index 33a2cdd..6b783ff 100644
+index 33a2cdd..cb37688 100644
 --- a/runtime/src/machine/onchip.cpp
 +++ b/runtime/src/machine/onchip.cpp
-@@ -151,7 +151,9 @@ static void divide(OnChip& o, bool wide) {
+@@ -32,6 +32,13 @@ struct OnChip {
+ static OnChip g_oc[2];
+ static uint32_t g_phi_div = 65;             // the master clock's divisor for φ: 65 or 61
+ 
++// The CPUs run at φ too: picoseconds per SH-2 cycle at the current divisor (37 211 at 320 dots,
++// 34 921 at 352, NTSC)
++uint64_t onchip_ps_per_cycle() {
++    const uint64_t master = bios_pal() ? 1734687500ull : 1746818182ull;
++    return (g_phi_div * 1000000000000ull + master / 2) / master;
++}
++
+ uint64_t onchip_phi_clocks(uint64_t ns) {
+     const uint64_t master = bios_pal() ? 1734687500ull : 1746818182ull;
+     return (uint64_t)((unsigned __int128)ns * master / ((uint64_t)g_phi_div * 1000000000ull));
+@@ -151,7 +158,9 @@ static void divide(OnChip& o, bool wide) {
      int32_t dvsr = (int32_t)rd(o, 0x100, 4);
      int64_t n = wide ? (int64_t)((uint64_t)rd(o, 0x110, 4) << 32 | rd(o, 0x114, 4)) : (int32_t)rd(o, 0x104, 4);
      int64_t q, r;
@@ -1658,7 +1906,7 @@ index 33a2cdd..6b783ff 100644
      if (!ovf) {
          q = n / dvsr; r = n % dvsr;
          ovf = q > INT32_MAX || q < INT32_MIN;
-@@ -163,6 +165,9 @@ static void divide(OnChip& o, bool wide) {
+@@ -163,11 +172,15 @@ static void divide(OnChip& o, bool wide) {
      }
      wr(o, 0x104, (uint32_t)q, 4); wr(o, 0x114, (uint32_t)q, 4);
      wr(o, 0x110, (uint32_t)r, 4);
@@ -1668,7 +1916,13 @@ index 33a2cdd..6b783ff 100644
      // the unit's registers are mirrored at +0x20
      for (uint32_t k = 0x100; k < 0x120; k += 4) wr(o, k + 0x20, rd(o, k, 4), 4);
  }
-@@ -183,7 +188,8 @@ static void dma(OnChip& o, int ch) {
+ 
+ static void dma(OnChip& o, int ch) {
++    BusQuiet quiet;
+     uint32_t base = 0x180 + ch * 0x10;
+     uint32_t chcr = rd(o, base + 0xC, 4), dmaor = rd(o, 0x1B0, 4);
+     if (!(chcr & 1) || (chcr & 2) || !(dmaor & 1)) return;
+@@ -183,7 +196,8 @@ static void dma(OnChip& o, int ch) {
          if (ts == 3) {
              for (int k = 0; k < 16; k += 4) st32(dar + (dm ? k : 0), ld32(sar + (sm ? k : 0)));
              sar += step(sm); dar += step(dm);
@@ -1679,7 +1933,7 @@ index 33a2cdd..6b783ff 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..68fbf34 100644
+index 6cbd98f..ef03e54 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -1690,15 +1944,30 @@ index 6cbd98f..68fbf34 100644
      std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
                                      // in saturn-recomp's directory in the user's data directory
      std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
-@@ -104,6 +105,7 @@ void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if n
+@@ -88,6 +89,9 @@ extern SH2Context* g_cpu;           // the CPU running now
+ 
+ int  saturn_main(const SaturnConfig& cfg);
+ uint64_t sat_now();                 // ns since power-on (virtual or host)
++// sat_now() plus the master's time spent since its last poll: the time of the access it is making
++// (devices that must meet the CPU between polls). The slave, and host time, get sat_now().
++uint64_t sat_now_cpu();
+ uint64_t sat_vblanks();
+ inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
+ void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+@@ -103,7 +107,12 @@ void slave_off();                   // SSHOFF: held in reset
+ void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
++// Device-side memory traffic (DMA, the devices' own polls, the agent) costs the
++// CPU no bus waits: mmio.cpp charges an access only while this is 0.
++inline int g_bus_quiet = 0;    // >0: device or DMA traffic, charged to no CPU
++struct BusQuiet { BusQuiet() { ++g_bus_quiet; } ~BusQuiet() { --g_bus_quiet; } };
  bool state_slave_busy();            // the slave is on: no dump can be taken (state.cpp)
 +void machine_capture_debug(const std::string& directory);
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,6 +114,12 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,6 +121,12 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -1711,8 +1980,44 @@ index 6cbd98f..68fbf34 100644
  void state_load(const std::string& path);   // after the boot: the machine as the dump has it
  int  sh2_active_slots();            // the modules active now (core.cpp)
  const SH2Module* sh2_active_slot(int i);
+@@ -206,6 +221,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
+ void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
+ void onchip_reset(int cpu);
+ void onchip_set_clock(bool dots352);   // SMPC's CKCHG: φ at 352 dots' rate or 320's
++uint64_t onchip_ps_per_cycle();          // the SH-2s' cycle at φ's current rate
+ uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
+ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
+ 
+@@ -218,6 +234,7 @@ void video_write(uint32_t a, uint32_t v, int size);
+ bool video_owns(uint32_t a);
+ uint64_t video_frame_changes();
+ uint64_t video_frame_ns();                      // one field, 263 lines
++uint64_t video_next_vblank_edge_ns(uint64_t now);  // the next line VBlank-IN or -OUT can start at
+ uint64_t video_draws();
+ 
+ // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
+diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
+index 52ca0df..509f1a3 100644
+--- a/runtime/src/machine/scu.cpp
++++ b/runtime/src/machine/scu.cpp
+@@ -76,6 +76,7 @@ static bool bbus(uint32_t a) {
+ }
+ 
+ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, uint32_t wadd) {
++    BusQuiet quiet;
+     // 32-bit units; the B bus takes them as two 16-bit writes, each moving by the write add
+     for (uint32_t i = 0; i < bytes; i += 4) {
+         uint32_t n = bytes - i < 4 ? bytes - i : 4;
+@@ -103,6 +104,7 @@ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, ui
+ }
+ 
+ static void dma_run(int lvl) {
++    BusQuiet quiet;
+     Dma& d = g_dma[lvl];
+     uint32_t radd = (d.ad >> 8 & 1) ? 4 : 0;
+     uint32_t wadd = (d.ad & 7) ? 1u << (d.ad & 7) : 0;
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
-index ef4f660..26a52aa 100644
+index ef4f660..13864ed 100644
 --- a/runtime/src/machine/scudsp.cpp
 +++ b/runtime/src/machine/scudsp.cpp
 @@ -9,9 +9,9 @@
@@ -1785,7 +2090,7 @@ index ef4f660..26a52aa 100644
      bool hold = op >> 14 & 1, to_d0 = op >> 12 & 1;
      int ram = op >> 8 & 7;
      int bump[4] = {};
-@@ -189,43 +197,82 @@ static void op_dma(uint32_t op) {
+@@ -189,43 +197,83 @@ static void op_dma(uint32_t op) {
          if (to_d0) g.wa0 += n * add / 4;
          else g.ra0 += n * add / 4;
      }
@@ -1809,6 +2114,7 @@ index ef4f660..26a52aa 100644
 -            int d = op >> 26 & 0xF;
 -            if (d == 12) { delay = g.pc; g.top = g.pc; g.pc = v & 0xFF; }
 -            else write_dst(d, v);
++    BusQuiet quiet;
 +    const Dsp initial=g;
 +    uint32_t visits[256]{};
 +    // PC addresses the prefetched word, one ahead of the executing instruction.
@@ -2097,6 +2403,1123 @@ index 91d606c..387ded9 100644
          if (loading) s.resize(n);
          if (n) raw(s.data(), n);
      }
+diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
+index b40fefc..74c2091 100644
+--- a/runtime/src/sound/scsp.cpp
++++ b/runtime/src/sound/scsp.cpp
+@@ -34,8 +34,7 @@
+ // enabled (bits 8-10 take bit 7's level).
+ //
+ // The envelope, LFO and DSP follow MAME's scsp.cpp and scspdsp.cpp: the
+-// envelope times in milliseconds, the key-rate scaling, the LFO tables and
+-// scales, the FM scaling, and the DSP step with its floating-point
++// envelope times in milliseconds, the key-rate scaling, and the DSP step with its floating-point
+ // PACK/UNPACK of the ring buffer. Those parts are derived from MAME's code:
+ //   Copyright (c) ElSemi, R. Belmont (thanks-to kingshriek), BSD-3-Clause;
+ //   the licence's text is in THIRD_PARTY.md at the root of saturn-recomp.
+@@ -53,26 +52,22 @@ uint8_t g_sound_ram[0x80000];
+ 
+ namespace {
+ 
+-constexpr int kShift = 12;                      // fraction bits of a sample position
+-constexpr int kEgShift = 16;                    // fraction bits of the envelope
+-
+ enum { EG_ATTACK, EG_DECAY1, EG_DECAY2, EG_RELEASE };
+ 
+-struct Lfo {
+-    uint32_t phase, step;
+-    const int* table;
+-    const int* scale;
+-};
+-
++// A slot. Its sample position is a 16-bit sample count (addr) and a 14-bit fraction; its envelope
++// an attenuation, 0 loudest, 0x3FF silent, in steps of 3/32 dB.
+ struct Slot {
+     uint16_t r[16];                             // the registers as written
+-    bool active, keyed, backwards;
+-    int64_t pos;                                // samples from SA, kShift fraction bits
+-    int eg_state;
+-    int32_t eg_vol;                             // 0..0x3FF << kEgShift, 0x3FF loudest
+-    int32_t ar, d1r, d2r, rr;                   // per-sample steps
+-    int dl;
+-    Lfo plfo, alfo;
++    bool playing;                               // reading its waveform (a loop-less one stops at LEA)
++    bool in_loop, reverse;                      // past LSA; reading backwards (reverse and alternating loops)
++    bool lost;                                  // went backwards past the wave's start: reads on down, unturned, until a key-on
++    uint16_t addr;
++    uint32_t frac;                              // 14 bits
++    int env_phase;
++    uint32_t env;                               // 0..0x3FF
++    uint8_t lfo;                                // the LFO's position: 0-255, a step each lfo_time samples
++    uint16_t lfo_time;                          // samples to its next step (counts down; 0 wraps)
++    uint8_t lfo_was;                            // the position before this sample's step (the pitch LFO reads it)
+     // register fields
+     bool pcm8() const { return r[0] & 0x10; }
+     int sbctl() const { return r[0] >> 9 & 3; }
+@@ -120,7 +115,10 @@ struct Dsp {
+     int32_t temp[128], mems[32], mixs[16];
+     int16_t exts[2], efreg[16];
+     uint32_t dec;
+-    int last_step;                              // steps to run (0: stopped)
++    int64_t acc;                                // carried from one sample to the next
++    int32_t frc, yreg, memval, rd_value;
++    uint32_t adrs;
++    int rd_wait;                                // steps until rd_value reaches memval
+ };
+ 
+ Slot g_slot[32];
+@@ -129,161 +127,162 @@ Timer g_timer[3];
+ uint32_t g_scieb, g_scipd, g_scilv[3], g_mcieb, g_mcipd;
+ bool g_main_line;
+ uint32_t g_samples;                             // since reset
++uint32_t g_counter;                             // the envelope's clock: 32 a sample
++bool g_key_execute;                             // KYONEX written: keys move at the next sample
+ int32_t g_stack[64];                            // the sound stack (0x600): the slots' last outputs
+ unsigned g_stack_pos;
++// A slot's output reaches the stack four slots later (slot k's lands after slot k + 4 has read the
++// stack): the outputs on their way, by slot & 3, and which of them STWINH keeps out.
++int32_t g_stack_delay[4];
++uint8_t g_stack_delay_skip;
+ Dsp g_dsp;
+ uint32_t g_noise = 1;
+ 
+ // ---- tables ------------------------------------------------------------------------------
+-float g_eg_gain[1024], g_tl_gain[256], g_sdl_gain[8], g_pan_l[32], g_pan_r[32], g_mvol[16];
+-int32_t g_ar_step[64], g_dr_step[64];
+-int g_alfo[4][256], g_plfo[4][256], g_ascale[8][256], g_pscale[8][256];
+-
+-const double kArMs[64] = {
+-    1e5, 1e5, 8100.0, 6900.0, 6000.0, 4800.0, 4000.0, 3400.0, 3000.0, 2400.0, 2000.0, 1700.0, 1500.0,
+-    1200.0, 1000.0, 860.0, 760.0, 600.0, 500.0, 430.0, 380.0, 300.0, 250.0, 220.0, 190.0, 150.0, 130.0, 110.0, 95.0,
+-    76.0, 63.0, 55.0, 47.0, 38.0, 31.0, 27.0, 24.0, 19.0, 15.0, 13.0, 12.0, 9.4, 7.9, 6.8, 6.0, 4.7, 3.8, 3.4, 3.0, 2.4,
+-    2.0, 1.8, 1.6, 1.3, 1.1, 0.93, 0.85, 0.65, 0.53, 0.44, 0.40, 0.35, 0.0, 0.0};
+-const double kDrMs[64] = {
+-    1e5, 1e5, 118200.0, 101300.0, 88600.0, 70900.0, 59100.0, 50700.0, 44300.0, 35500.0, 29600.0, 25300.0, 22200.0,
+-    17700.0, 14800.0, 12700.0, 11100.0, 8900.0, 7400.0, 6300.0, 5500.0, 4400.0, 3700.0, 3200.0, 2800.0, 2200.0, 1800.0,
+-    1600.0, 1400.0, 1100.0, 920.0, 790.0, 690.0, 550.0, 460.0, 390.0, 340.0, 270.0, 230.0, 200.0, 170.0, 140.0, 110.0,
+-    98.0, 85.0, 68.0, 57.0, 49.0, 43.0, 34.0, 28.0, 25.0, 22.0, 18.0, 14.0, 12.0, 11.0, 8.5, 7.1, 6.1, 5.4, 4.3, 3.6, 3.1};
+-const float kLfoHz[32] = {0.17f, 0.19f, 0.23f, 0.27f, 0.34f, 0.39f, 0.45f, 0.55f, 0.68f, 0.78f, 0.92f,
+-                          1.10f, 1.39f, 1.60f, 1.87f, 2.27f, 2.87f, 3.31f, 3.92f, 4.79f, 6.15f, 7.18f,
+-                          8.60f, 10.8f, 14.4f, 17.2f, 21.5f, 28.7f, 43.1f, 57.4f, 86.1f, 172.3f};
+-const float kAScaleDb[8] = {0.0f, 0.4f, 0.8f, 1.5f, 3.0f, 6.0f, 12.0f, 24.0f};
+-const float kPScaleCents[8] = {0.0f, 7.0f, 13.5f, 27.0f, 55.0f, 112.0f, 230.0f, 494.0f};
++// The master volume: MVOL 0-15 to a gain in 256ths, 3 dB a step.
++const int32_t kMasterVolume[16] = {0, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256};
++float g_sdl_gain[8];
++// The LFO's period in samples per step, by LFOF (measured on the reference, black box).
++const uint16_t kLfoPeriod[32] = {1020, 892, 764, 636, 508, 444, 380, 316, 252, 220, 188, 156, 124, 108, 92, 76,
++                                 60, 52, 44, 36, 28, 24, 20, 16, 12, 10, 8, 6, 4, 3, 2, 1};
+ 
+ float db(float d) { return std::pow(10.0f, d / 20.0f); }
+ 
+ void init_tables() {
+-    for (int i = 0; i < 1024; ++i) g_eg_gain[i] = db(3.0f * (i - 0x3FF) / 32.0f);
+-    for (int i = 0; i < 256; ++i) {
+-        static const float kBits[8] = {0.4f, 0.8f, 1.5f, 3.0f, 6.0f, 12.0f, 24.0f, 48.0f};
+-        float d = 0;
+-        for (int b = 0; b < 8; ++b)
+-            if (i >> b & 1) d -= kBits[b];
+-        g_tl_gain[i] = db(d);
+-    }
+     g_sdl_gain[0] = 0;
+     for (int i = 1; i < 8; ++i) g_sdl_gain[i] = db(-6.0f * (7 - i));
+-    for (int p = 0; p < 32; ++p) {
+-        int a = p & 15;
+-        float g = a == 15 ? 0.0f : db(-(3.0f * (a & 1) + 6.0f * (a >> 1 & 1) + 12.0f * (a >> 2 & 1) + 24.0f * (a >> 3 & 1)));
+-        g_pan_l[p] = p < 16 ? g : 1.0f;         // 0x00-0x0F attenuate the left, 0x10-0x1F the right
+-        g_pan_r[p] = p < 16 ? 1.0f : g;
+-    }
+-    g_mvol[0] = 0;
+-    for (int i = 1; i < 16; ++i) g_mvol[i] = db(-3.0f * (15 - i));
+-    for (int i = 0; i < 64; ++i) {
+-        g_ar_step[i] = i < 2 ? 0 : kArMs[i] == 0.0 ? 1024 << kEgShift
+-                                                   : (int32_t)(1023 * 1000.0 / (44100.0 * kArMs[i]) * (1 << kEgShift));
+-        g_dr_step[i] = i < 2 ? 0 : (int32_t)(1023 * 1000.0 / (44100.0 * kDrMs[i]) * (1 << kEgShift));
+-    }
+-    uint32_t rnd = 0x12345678;
+-    for (int i = 0; i < 256; ++i) {
+-        g_alfo[0][i] = 255 - i;                 // saw
+-        g_plfo[0][i] = i < 128 ? i : i - 256;
+-        g_alfo[1][i] = i < 128 ? 255 : 0;       // square
+-        g_plfo[1][i] = i < 128 ? 127 : -128;
+-        g_alfo[2][i] = i < 128 ? 255 - i * 2 : i * 2 - 256;   // triangle
+-        g_plfo[2][i] = i < 64 ? i * 2 : i < 128 ? 255 - i * 2 : i < 192 ? 256 - i * 2 : i * 2 - 511;
+-        rnd = rnd * 1103515245u + 12345u;       // noise
+-        int a = (int)(rnd >> 16 & 0xFF);
+-        g_alfo[3][i] = a;
+-        g_plfo[3][i] = 128 - a;
+-    }
+-    for (int s = 0; s < 8; ++s)
+-        for (int i = 0; i < 256; ++i) {
+-            g_pscale[s][i] = (int)(256.0f * std::pow(2.0f, kPScaleCents[s] * (i - 128) / 128.0f / 1200.0f));
+-            g_ascale[s][i] = (int)(256.0f * db(-kAScaleDb[s] * i / 256.0f));
+-        }
++}
++
++// ---- levels ------------------------------------------------------------------------------
++// An attenuation in steps of 3/32 dB: 64 steps make 6 dB (a shift), the 64 within it 127/128
++// down to 64/128. Past 31 shifts a negative value stays -1.
++int32_t attenuate(int32_t v, uint32_t a, int top) {
++    uint32_t sh = 7 + (a >> 6);
++    return (v * (top - (int32_t)(a & 63))) >> (sh > 31 ? 31 : sh);
+ }
+ 
+ // ---- a slot ------------------------------------------------------------------------------
++int plfo_value(const Slot& s);
++
++// The phase step: 1024 + FNS, 14 fraction bits, times 2^OCT.
+ uint32_t step_of(const Slot& s) {
+     uint32_t fn = (uint32_t)s.fns() + 1024;
+-    int sh = s.oct() + kShift - 10;
+-    return sh >= 0 ? fn << sh : fn >> -sh;
++    if (s.plfos()) fn = fn * (uint32_t)(1024 + ((plfo_value(s) >> 1 << s.plfos()) >> 6)) >> 10;
++    fn <<= 4;
++    int o = s.oct();
++    return o >= 0 ? fn << o : fn >> -o;
+ }
+ 
+-void compute_eg(Slot& s) {
+-    int base = s.krs() == 15 ? 0 : s.oct() + 2 * s.krs() + (s.fns() >> 9 & 1);
+-    auto rate = [&](int r, const int32_t* table) { return r ? table[std::clamp(base + 2 * r, 0, 63)] : 0; };
+-    s.ar = rate(s.ar_r(), g_ar_step);
+-    s.d1r = rate(s.d1r_r(), g_dr_step);
+-    s.d2r = rate(s.d2r_r(), g_dr_step);
+-    s.rr = rate(s.rr_r(), g_dr_step);
+-    s.dl = 0x1F - s.dl_r();
++// The LFO (fitted to the reference, black box): an 8-bit position c steps every kLfoPeriod[LFOF]
++// samples and is not reset by a key-on (LFORE holds it at 0). The amplitude LFO's value (0-255:
++// saw c, square 0/255, triangle 2c up then down, noise) and the pitch LFO's (signed: saw c,
++// square 127/-128, triangle 0 up to 127, down to -128 and back) are halved, then scaled by 2^S/64
++// (ALFOS/PLFOS = S): the ALFO adds that much attenuation, the PLFO moves the pitch's 1024 + FNS by
++// that many 1024ths.
++void lfo_tick(Slot& s) {
++    s.lfo_was = s.lfo;
++    if (s.lfore()) { s.lfo = 0; return; }
++    if (--s.lfo_time == 0) { s.lfo_time = kLfoPeriod[s.lfof()]; ++s.lfo; }
++}
++
++uint32_t lfo_noise() { return g_noise >> 16 & 0xFF; }  // not fitted: the reference's noise generator
++
++int alfo_value(const Slot& s) {
++    int c = s.lfo;
++    switch (s.alfows()) {
++    case 0: return c;
++    case 1: return c < 128 ? 0 : 255;
++    case 2: return c < 128 ? 2 * c : 2 * (255 - c);
++    default: return (int)lfo_noise();
++    }
+ }
+ 
+-void compute_lfo(Slot& s) {
+-    uint32_t step = (uint32_t)(kLfoHz[s.lfof()] * 256.0f / 44100.0f * 256.0f);
+-    s.plfo.step = s.alfo.step = step;
+-    s.plfo.table = g_plfo[s.plfows()];
+-    s.plfo.scale = g_pscale[s.plfos()];
+-    s.alfo.table = g_alfo[s.alfows()];
+-    s.alfo.scale = g_ascale[s.alfos()];
++int plfo_value(const Slot& s) {
++    int c = s.lfo_was;
++    switch (s.plfows()) {
++    case 0: return (int8_t)c;
++    case 1: return c < 128 ? 127 : -128;
++    case 2: return c < 64 ? 2 * c : c < 192 ? 254 - 2 * c : 2 * c - 512;
++    default: return (int8_t)lfo_noise();
++    }
+ }
+ 
++int eg_rate(const Slot& s, int r);
++
+ void key_on(Slot& s) {
+-    s.active = true;
+-    s.pos = 0;
+-    s.backwards = false;
+-    compute_eg(s);
+-    compute_lfo(s);
+-    s.plfo.phase = s.alfo.phase = 0;
+-    s.eg_state = EG_ATTACK;
+-    s.eg_vol = 0x17F << kEgShift;               // MAME's starting point for the attack
++    s.playing = true;
++    s.addr = 0;
++    s.frac = 0;
++    s.in_loop = s.reverse = s.lost = false;
++    if (!s.lsa()) s.in_loop = true, s.reverse = s.lpctl() == 2;   // a reverse loop from 0 reads backwards at once
++    s.env_phase = EG_ATTACK;
++    s.env = 0x280;                              // where an attack starts
++    if (eg_rate(s, s.ar_r()) >= 64) s.env = 0;   // at once (the attack phase ends at its next step)
+ }
+ 
+-void key_off(Slot& s) {
+-    if (s.active) s.eg_state = EG_RELEASE;
++// The envelope's rate from a 5-bit rate: 2R, plus 2 (KRS + OCT) unless KRS is 15; 0 stays 0.
++int eg_rate(const Slot& s, int r) {
++    if (!r) return 0;
++    r *= 2;
++    if (s.krs() != 15) r += std::max(0, 2 * (s.krs() + s.oct()));
++    return r;                                   // past 62: 64 and up (KRS) attack at once
+ }
+ 
+-// The envelope, one sample on: the gain to apply
+-float eg_step(Slot& s) {
+-    switch (s.eg_state) {
+-    case EG_ATTACK:
+-        s.eg_vol += s.ar;
+-        if (s.eg_vol >= 0x3FF << kEgShift) {
+-            s.eg_vol = 0x3FF << kEgShift;
+-            if (!s.lpslnk()) s.eg_state = s.d1r >= 1024 << kEgShift ? EG_DECAY2 : EG_DECAY1;
++// The envelope moves every other sample, at tick T (the counter / 64). Below rate 48 a rate
++// moves once in 2^(12 - rate/4) ticks (rates 4n+2 half as often again); from 48 on every
++// tick, by more: L = (rate - 48) / 4, the 4n+2 rates one more on even ticks, at most 3. The
++// attack takes away (env >> (4 - L)) + 1, and stays put at 0x3C0 or above; the decays and
++// the release add 2^L.
++static void eg_move(Slot& s, uint32_t tick) {
++    int R = s.env_phase == EG_ATTACK ? s.ar_r() : s.env_phase == EG_DECAY1 ? s.d1r_r()
++          : s.env_phase == EG_DECAY2 ? s.d2r_r() : s.rr_r();
++    int r = eg_rate(s, R);
++    if (!r) return;
++    if (s.env_phase == EG_ATTACK && r >= 64) {
++        s.env = 0;
++        s.env_phase = s.dl_r() ? EG_DECAY1 : EG_DECAY2;   // an instant attack checks DL at once
++        return;
++    }
++    r = std::min(r, 62);
++    int L = 0;
++    if (r < 48) {
++        uint32_t h = 1u << (11 - r / 4);
++        if (tick & (h - 1)) return;
++        uint32_t m = tick >> (11 - r / 4);
++        if (r % 4 == 0 ? !(m & 1) : !(m & 3)) return;
++    } else {
++        L = std::min(3, (r - 48) / 4 + (r % 4 == 2 && !(tick & 1)));
++    }
++    if (s.env_phase == EG_ATTACK) {
++        if (s.env < 0x3C0) {
++            int32_t e = (int32_t)s.env - (int32_t)((s.env >> (4 - L)) + 1);
++            if (e <= 0) { e = 0; s.env_phase = EG_DECAY1; }
++            s.env = (uint32_t)e;
+         }
+-        if (s.eghold()) return 1.0f;
+-        return (float)(s.eg_vol >> kEgShift) / 1024.0f;   // the attack is linear in amplitude
+-    case EG_DECAY1:
+-        s.eg_vol = std::max(0, s.eg_vol - s.d1r);
+-        if (s.eg_vol >> (kEgShift + 5) <= s.dl) s.eg_state = EG_DECAY2;
+-        break;
+-    case EG_DECAY2:
+-        s.eg_vol = std::max(0, s.eg_vol - s.d2r);
+-        break;
+-    case EG_RELEASE:
+-        s.eg_vol -= s.rr;
+-        if (s.eg_vol <= 0) { s.eg_vol = 0; s.active = false; }
+-        break;
++        return;
+     }
+-    return g_eg_gain[s.eg_vol >> kEgShift];
++    s.env = std::min<uint32_t>(0x3FF, s.env + (1u << L));
+ }
+ 
+-int lfo_next(Lfo& l, bool reset) {
+-    if (reset) l.phase = 0;
+-    else l.phase += l.step;
+-    return l.table[l.phase >> 8 & 0xFF];
++// Decay 1 ends at DL whether or not its rate moved the level this step (D1R 0 with DL 0 goes on
++// to D2R), but not on the step a stepped attack reached 0: that waits a step (black box).
++void eg_step(Slot& s, uint32_t tick) {
++    bool d1 = s.env_phase == EG_DECAY1;
++    eg_move(s, tick);
++    if (d1 && (int)(s.env >> 5) == s.dl_r()) s.env_phase = EG_DECAY2;
+ }
+ 
+-int32_t read_sample(const Slot& s, int64_t idx) {
++
++int32_t read_sample(const Slot& s, uint32_t idx) {
+     if (s.ssctl() == 1) {                       // noise
+         g_noise = g_noise * 1103515245u + 12345u;
+         return (int16_t)(g_noise >> 16);
+     }
+     if (s.ssctl() != 0) return 0;
+     int32_t v;
+-    if (s.pcm8()) v = (int8_t)g_sound_ram[(s.sa() + (uint32_t)idx) & 0x7FFFF] << 8;
++    if (s.pcm8()) v = (int8_t)g_sound_ram[(s.sa() + idx) & 0x7FFFF] << 8;
+     else {
+-        uint32_t a = (s.sa() + 2 * (uint32_t)idx) & 0x7FFFE;
++        uint32_t a = (s.sa() + 2 * idx) & 0x7FFFE;
+         v = (int16_t)(g_sound_ram[a] << 8 | g_sound_ram[a + 1]);
+     }
+     if (s.sbctl() & 1) v ^= 0x7FFF;
+@@ -291,44 +290,85 @@ int32_t read_sample(const Slot& s, int64_t idx) {
+     return v;
+ }
+ 
+-// One sample of a slot, after the envelope and the level LFO, before TL
+-int32_t slot_sample(Slot& s) {
+-    int64_t lsa = (int64_t)s.lsa() << kShift, lea = (int64_t)s.lea() << kShift;
+-    int64_t idx = s.pos >> kShift;
+-    if (s.mdl() >= 5) {                         // FM: the address moved by two earlier outputs
+-        int32_t m = (g_stack[(g_stack_pos + s.mdxsl()) & 63] + g_stack[(g_stack_pos + s.mdysl()) & 63]) / 2;
+-        idx += (m << 10) >> (0x1A - s.mdl());
++// One sample of a slot's waveform, then the position moves on. The sample between two is
++// a + (b - a) * f / 64, f the top 6 bits of the fraction; backwards, the position mirrored in
++// the loop (LEA + LSA - 1 - addr) and the fraction's complement.
++int32_t slot_wave(Slot& s) {
++    uint32_t idx = s.addr, f = s.frac >> 8;
++    if (s.reverse) { idx = (s.lea() + s.lsa() - 1 - s.addr) & 0xFFFF; f = (~s.frac >> 8) & 63; }
++    uint32_t next = (idx + 1) & 0xFFFF;
++    // FM (MDL 5-15): the stack words MDXSL and MDYSL ahead of this slot's place, summed, move the
++    // read by (X + Y) * 2^(MDL - 2) / 2^14 samples. The fraction then added to the slot's own can
++    // pass a whole sample: the read then is the next sample itself (the weight stops at 64/64).
++    // The moved fraction counts in 32nds; a move below the wave's start reads the bytes before it.
++    // Fitted to the reference's output (black box) with a ramp read under a constant modulator.
++    if (s.mdl() >= 5) {
++        int32_t x = g_stack[(g_stack_pos + s.mdxsl()) & 63], y = g_stack[(g_stack_pos + s.mdysl()) & 63];
++        int32_t m = (x + y) * (1 << (s.mdl() - 2));
++        idx += (uint32_t)(m >> 14);
++        next = idx + 1;
++        f = std::min<uint32_t>(f + ((uint32_t)m >> 9 & 31) * 2, 64);
++    }
++    int32_t a = read_sample(s, idx), b = read_sample(s, next);
++    int32_t v = a + (((b - a) * (int32_t)f) >> 6);
++
++    uint32_t step = step_of(s);
++    s.frac += step;
++    s.addr = (uint16_t)(s.addr + (s.frac >> 14));
++    s.frac &= 0x3FFF;
++    // the loop: once past LSA, at LEA back by LEA - LSA (a loop-less slot stops there)
++    if (s.in_loop && !s.lost && s.addr >= s.lea()) {
++        if (s.lpctl() == 0) s.playing = false;
++        // backwards, a step that ends more than LSA samples past LEA (before the wave's start) is
++        // not turned: the reference reads on backwards below the wave, the address wrapping at 16
++        // bits, until a key-on (black box)
++        else if (s.reverse && s.addr - s.lea() > s.lsa()) s.lost = true;
++        else {
++            s.addr = (uint16_t)(s.addr - (s.lea() - s.lsa()));
++            if (s.lpctl() == 3) s.reverse = !s.reverse;
++        }
+     }
+-    int32_t frac = (int32_t)(s.pos & ((1 << kShift) - 1));
+-    int32_t a = read_sample(s, idx), b = read_sample(s, idx + (s.backwards ? -1 : 1));
+-    int32_t v = (int32_t)(((int64_t)a * ((1 << kShift) - frac) + (int64_t)b * frac) >> kShift);
+-
+-    int64_t step = step_of(s);
+-    if (s.plfos()) step = step * s.plfo.scale[lfo_next(s.plfo, s.lfore()) + 128] / 256;
+-    s.pos += s.backwards ? -step : step;
+-    if (!s.backwards && s.pos >= lsa && s.lpslnk() && s.eg_state == EG_ATTACK) s.eg_state = EG_DECAY1;
+-    switch (s.lpctl()) {
+-    case 0:                                     // no loop: stop at the end
+-        if (s.pos >= lea && s.pos >= lsa) s.active = false;
+-        break;
+-    case 1:                                     // loop LSA-LEA
+-        if (s.pos >= lea) s.pos -= std::max<int64_t>(lea - lsa, 1 << kShift);
+-        break;
+-    case 2:                                     // reverse: to LSA, then LEA down to LSA, again
+-        if (!s.backwards && s.pos >= lsa) { s.pos = lea - (s.pos - lsa); s.backwards = true; }
+-        else if (s.backwards && s.pos < lsa) s.pos = lea - (lsa - s.pos);
+-        break;
+-    case 3:                                     // alternating: LEA down to LSA, up to LEA
+-        if (!s.backwards && s.pos >= lea) { s.pos = 2 * lea - s.pos; s.backwards = true; }
+-        else if (s.backwards && s.pos < lsa) { s.pos = 2 * lsa - s.pos; s.backwards = false; }
+-        break;
++    if (s.addr >= s.lsa()) {
++        s.in_loop = true;
++        if (s.lpctl() == 2) s.reverse = true;
++    }
++    return v;
++}
++
++// The slot after its envelope, the level LFO and TL (unless SDIR).
++int32_t slot_sample(Slot& s) {
++    int32_t v = slot_wave(s);
++    if (s.sdir()) return v;
++    uint32_t a = (s.eghold() && s.env_phase == EG_ATTACK ? 0 : s.env) + ((uint32_t)s.tl() << 2);
++    if (s.alfos()) a += (uint32_t)((alfo_value(s) >> 1 << s.alfos()) >> 6);
++    return attenuate(v, a, 127);
++}
++
++// A send, by its level (0 off, 7 loudest, 6 dB a step) and pan (bit 4: which side; 0-14
++// that side's attenuation in 3 dB steps, 15 silent).
++int32_t send(int32_t v, int sdl, int pan, int ch) {
++    if (!sdl) return 0;
++    uint32_t a = (uint32_t)(7 - sdl) * 64;
++    if ((ch == 0) == (pan < 16)) {
++        if ((pan & 15) == 15) return 0;
++        a += (uint32_t)(pan & 15) * 32;
+     }
+-    if (s.sdir()) return v;                     // direct: no envelope, no LFO
+-    if (s.alfos()) v = v * s.alfo.scale[lfo_next(s.alfo, s.lfore())] / 256;
+-    return (int32_t)(v * eg_step(s));
++    return attenuate(v, a, 128);
+ }
+ 
+-// ---- the DSP (after MAME's scspdsp.cpp) -----------------------------------------------------
++// ---- the DSP ------------------------------------------------------------------------------
++// One sample runs all 128 steps. Fitted step by step to the reference's output (black box):
++//  - INPUTS is read at the start of a step (MEMS, MIXS << 4, EXTS << 8; 24 bits); an IWT in the
++//    same step writes MEMS[IWA] from the memory read pipeline but does not change INPUTS.
++//  - ACC = X * Y >> 12 + B; the shifter works on the previous step's ACC (SHIFT 0/1 saturate,
++//    2/3 wrap to 24 bits). ACC, FRC, Y and ADRS carry over from one sample to the next.
++//  - Memory: a read or a write may be on any step. A read's value reaches MEMVAL two steps later
++//    (across sample ends too); a write lands at once. The address is formed before this step's
++//    ADRL: MADRS[MASA] (+ MDEC_CT unless TABLE) (+ ADRS, 12 bits signed, if ADREB) (+1 if NXADR),
++//    wrapped to the ring (TABLE: 64K words), plus RBP. NOFL is bit 8 of the fourth word.
++//  - EWT sets EFREG[EWA] = SHIFTED >> 8; EFREG holds its value until written again.
++//  - MDEC_CT counts down once a sample, wrapping at the ring length.
++//  Not fitted: a step with both MRD and MWT (the game never uses one).
+ int32_t sext(int32_t v, int bits) { return (int32_t)((uint32_t)v << (32 - bits)) >> (32 - bits); }
+ 
+ uint16_t dsp_pack(int32_t val) {
+@@ -350,15 +390,12 @@ int32_t dsp_unpack(uint16_t v) {
+     return sext(u, 24) >> e;
+ }
+ 
+-uint32_t g_rbl = 8192, g_rbp;                   // ring buffer: length in words, start in 8 KB units
++uint32_t g_rbl = 8192, g_rbp;                   // ring buffer: length in words, start in 4K words
+ 
+ void dsp_step() {
+     Dsp& d = g_dsp;
+-    std::memset(d.efreg, 0, sizeof d.efreg);
+-    if (!d.last_step) { std::memset(d.mixs, 0, sizeof d.mixs); return; }
+-    int32_t acc = 0, memval = 0, frc = 0, yreg = 0;
+-    uint32_t adrs = 0;
+-    for (int st = 0; st < d.last_step; ++st) {
++    for (int st = 0; st < 128; ++st) {
++        if (d.rd_wait && !--d.rd_wait) d.memval = d.rd_value;
+         const uint16_t* ip = d.mpro + st * 4;
+         uint32_t tra = ip[0] >> 8 & 0x7F, twt = ip[0] >> 7 & 1, twa = ip[0] & 0x7F;
+         uint32_t xsel = ip[1] >> 15 & 1, ysel = ip[1] >> 13 & 3, ira = ip[1] >> 6 & 0x3F, iwt = ip[1] >> 5 & 1,
+@@ -366,61 +403,54 @@ void dsp_step() {
+         uint32_t table = ip[2] >> 15 & 1, mwt = ip[2] >> 14 & 1, mrd = ip[2] >> 13 & 1, ewt = ip[2] >> 12 & 1,
+                  ewa = ip[2] >> 8 & 15, adrl = ip[2] >> 7 & 1, frcl = ip[2] >> 6 & 1, shift = ip[2] >> 4 & 3,
+                  yrl = ip[2] >> 3 & 1, negb = ip[2] >> 2 & 1, zero = ip[2] >> 1 & 1, bsel = ip[2] & 1;
+-        uint32_t nofl = ip[3] >> 15 & 1, coef = ip[3] >> 9 & 0x3F, masa = ip[3] >> 2 & 0x1F, adreb = ip[3] >> 1 & 1,
++        uint32_t nofl = ip[3] >> 8 & 1, coef = ip[3] >> 9 & 0x3F, masa = ip[3] >> 2 & 0x1F, adreb = ip[3] >> 1 & 1,
+                  nxadr = ip[3] & 1;
+-        int32_t in;
++        int32_t in = 0;
+         if (ira <= 0x1F) in = d.mems[ira];
+-        else if (ira <= 0x2F) in = d.mixs[ira - 0x20] << 4;
+-        else if (ira <= 0x31) in = d.exts[ira - 0x30] << 8;
+-        else break;
++        else if (ira <= 0x2F) in = sext(d.mixs[ira - 0x20], 20) * 16;
++        else if (ira <= 0x31) in = d.exts[ira - 0x30] * 256;
+         in = sext(in, 24);
+-        if (iwt) {
+-            d.mems[iwa] = memval;
+-            if (ira == iwa) in = memval;
+-        }
+-        int32_t b = 0;
++        int32_t t = sext(d.temp[(tra + d.dec) & 0x7F], 24);
++        int64_t b = 0;
+         if (!zero) {
+-            b = bsel ? acc : sext(d.temp[(tra + d.dec) & 0x7F], 24);
++            b = bsel ? d.acc : t;
+             if (negb) b = -b;
+         }
+-        int32_t x = xsel ? in : sext(d.temp[(tra + d.dec) & 0x7F], 24);
+-        int32_t y = ysel == 0 ? frc : ysel == 1 ? d.coef[coef] >> 3 : ysel == 2 ? (yreg >> 11) & 0x1FFF : (yreg >> 4) & 0x0FFF;
+-        if (yrl) yreg = in;
+-        int32_t shifted = shift == 0 ? std::clamp(acc, -0x800000, 0x7FFFFF)
+-                        : shift == 1 ? std::clamp(acc * 2, -0x800000, 0x7FFFFF)
+-                        : shift == 2 ? sext(acc * 2, 24) : sext(acc, 24);
+-        acc = (int32_t)(((int64_t)x * sext(y, 13)) >> 12) + b;
++        int32_t x = xsel ? in : t;
++        int32_t y = ysel == 0 ? d.frc : ysel == 1 ? d.coef[coef] >> 3 : ysel == 2 ? (d.yreg >> 11) & 0x1FFF : (d.yreg >> 4) & 0x0FFF;
++        if (yrl) d.yreg = in;
++        if (iwt) d.mems[iwa] = d.memval;
++        int64_t a = d.acc;
++        int32_t shifted = shift == 0 ? (int32_t)std::clamp<int64_t>(a, -0x800000, 0x7FFFFF)
++                        : shift == 1 ? (int32_t)std::clamp<int64_t>(a * 2, -0x800000, 0x7FFFFF)
++                        : shift == 2 ? sext((int32_t)(a * 2), 24) : sext((int32_t)a, 24);
++        d.acc = (((int64_t)x * sext(y, 13)) >> 12) + b;
+         if (twt) d.temp[(twa + d.dec) & 0x7F] = shifted;
+-        if (frcl) frc = shift == 3 ? shifted & 0x0FFF : (shifted >> 11) & 0x1FFF;
+-        if ((mrd || mwt) && (st & 1)) {
++        if (frcl) d.frc = shift == 3 ? shifted & 0x0FFF : (shifted >> 11) & 0x1FFF;
++        if (mrd || mwt) {
+             uint32_t addr = d.madrs[masa];
+             if (!table) addr += d.dec;
+-            if (adreb) addr += adrs & 0x0FFF;
++            if (adreb) addr += (uint32_t)sext((int32_t)d.adrs, 12);
+             if (nxadr) ++addr;
+             addr &= table ? 0xFFFF : g_rbl - 1;
+             addr = ((addr + (g_rbp << 12)) << 1) & 0x7FFFE;
+             if (mrd) {
+                 uint16_t w = (uint16_t)(g_sound_ram[addr] << 8 | g_sound_ram[addr + 1]);
+-                memval = nofl ? w << 8 : dsp_unpack(w);
+-            }
+-            if (mwt) {
++                d.rd_value = nofl ? sext(w << 8, 24) : dsp_unpack(w);
++                d.rd_wait = 2;
++            } else {
+                 uint16_t w = nofl ? (uint16_t)(shifted >> 8) : dsp_pack(shifted);
+                 g_sound_ram[addr] = (uint8_t)(w >> 8);
+                 g_sound_ram[addr + 1] = (uint8_t)w;
+             }
+         }
+-        if (adrl) adrs = shift == 3 ? (shifted >> 12) & 0xFFF : (uint32_t)(in >> 16);
+-        if (ewt) d.efreg[ewa] = (int16_t)(d.efreg[ewa] + (shifted >> 8));
++        if (adrl) d.adrs = shift == 3 ? (uint32_t)(shifted >> 12) & 0xFFF : (uint32_t)(in >> 16) & 0xFFF;
++        if (ewt) d.efreg[ewa] = (int16_t)(shifted >> 8);
+     }
+-    --d.dec;
+-    std::memset(d.mixs, 0, sizeof d.mixs);
++    d.dec = (d.dec - 1) & (g_rbl - 1);
+ }
+ 
+-void dsp_program_changed() {
+-    int i = 127;
+-    while (i >= 0 && !(g_dsp.mpro[i * 4] | g_dsp.mpro[i * 4 + 1] | g_dsp.mpro[i * 4 + 2] | g_dsp.mpro[i * 4 + 3])) --i;
+-    g_dsp.last_step = i + 1;
+-}
++void dsp_program_changed() {}
+ 
+ // ---- interrupts ---------------------------------------------------------------------------
+ int g_cpu_level;
+@@ -449,9 +479,9 @@ void pend(uint32_t bits) {
+ // ---- registers ------------------------------------------------------------------------------
+ uint16_t monitor() {                            // 0x408: the slot MSLC names, CA, SGC, EG
+     const Slot& s = g_slot[g_com[4] >> 11 & 31];
+-    uint32_t ca = (uint32_t)(s.pos >> (kShift + 12)) & 0xF;
+-    uint32_t sgc = s.active ? (uint32_t)s.eg_state : EG_RELEASE;
+-    uint32_t eg = (0x1F - (uint32_t)(s.eg_vol >> (kEgShift + 5))) & 0x1F;
++    uint32_t ca = (uint32_t)(s.addr >> 12) & 0xF;
++    uint32_t sgc = (uint32_t)s.env_phase;
++    uint32_t eg = s.env >> 5 & 0x1F;
+     return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
+ }
+ 
+@@ -496,7 +526,7 @@ uint16_t read16(uint32_t off) {
+     }
+     if (off >= 0x600 && off < 0x680) return (uint16_t)g_stack[(off - 0x600) >> 1];
+     if (off >= 0x700 && off < 0x780) return (uint16_t)g_dsp.coef[(off - 0x700) >> 1];
+-    if (off >= 0x780 && off < 0x800) return g_dsp.madrs[(off - 0x780) >> 1 & 31];
++    if (off >= 0x780 && off < 0x7C0) return g_dsp.madrs[(off - 0x780) >> 1];   // 0x7C0-0x7FF: no register
+     if (off >= 0x800 && off < 0xC00) return g_dsp.mpro[(off - 0x800) >> 1];
+     auto half = [&](int32_t v) { return (uint16_t)(off & 2 ? v & 0xFFFF : (uint32_t)v >> 16); };
+     if (off >= 0xC00 && off < 0xE00) return half(g_dsp.temp[(off >> 2) & 0x7F]);
+@@ -514,24 +544,11 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+         int w = off >> 1 & 15;
+         if (w >= 12) return;
+         s.r[w] = (uint16_t)((s.r[w] & ~mask) | (v & mask));
+-        if (w == 0 && (s.r[0] & 0x1000)) {      // KYONEX: every slot takes its KYONB
+-            s.r[0] &= ~0x1000;
+-            for (Slot& t : g_slot) {
+-                bool kb = t.r[0] & 0x0800;
+-                if (kb && !t.keyed) {
+-                    key_on(t);
+-                    sat_trace("SCSP key on %2d: SA %05X LSA %04X LEA %04X LP %d %s OCT %d FNS %03X TL %02X DISDL %d DIPAN %02X "
+-                              "IMXL %d ISEL %d EFSDL %d EFPAN %02X AR %d D1R %d D2R %d RR %d DL %d MDL %d", (int)(&t - g_slot),
+-                              t.sa(), t.lsa(), t.lea(), t.lpctl(), t.pcm8() ? "8" : "16", t.oct(), t.fns(), t.tl(), t.disdl(),
+-                              t.dipan(), t.imxl(), t.isel(), t.efsdl(), t.efpan(), t.ar_r(), t.d1r_r(), t.d2r_r(), t.rr_r(),
+-                              t.dl_r(), t.mdl());
+-                }
+-                else if (!kb && t.keyed) key_off(t);
+-                t.keyed = kb;
+-            }
+-        }
+-        if (w == 8 || w == 4 || w == 5) compute_eg(s);   // pitch moves key scaling; rates
+-        if (w == 9) compute_lfo(s);
++        if (w == 0 && (s.r[0] & 0x1000)) g_key_execute = true;  // KYONEX: every slot takes its KYONB at the next sample
++        // unused bits read back as 0 (black box): word 0 keeps 11-0, word 6 11-0, word 10 7-0
++        static const uint16_t kept[12] = {0x0FFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
++                                          0x0FFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x00FF, 0xFFFF};
++        s.r[w] &= kept[w];
+         return;
+     }
+     if (off < 0x430) {
+@@ -566,7 +583,7 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+     auto merge = [&](uint16_t old) { return (uint16_t)((old & ~mask) | (v & mask)); };
+     if (off >= 0x600 && off < 0x680) { int32_t& x = g_stack[(off - 0x600) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+     if (off >= 0x700 && off < 0x780) { int16_t& x = g_dsp.coef[(off - 0x700) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+-    if (off >= 0x780 && off < 0x800) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1 & 31]; x = merge(x); return; }
++    if (off >= 0x780 && off < 0x7C0) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1]; x = merge(x); return; }
+     if (off >= 0x800 && off < 0xC00) {
+         uint16_t& x = g_dsp.mpro[(off - 0x800) >> 1];
+         x = merge(x);
+@@ -590,13 +607,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+ void scsp_reset() {
+     static bool tables;
+     if (!tables) { init_tables(); tables = true; }
+-    for (Slot& s : g_slot) { s = Slot{}; compute_lfo(s); }
++    for (Slot& s : g_slot) { s = Slot{}; s.env_phase = EG_RELEASE; s.env = 0x3FF; s.lfo_time = 1; }
++    g_counter = 0;
++    g_key_execute = false;
+     std::memset(g_com, 0, sizeof g_com);
+     for (Timer& t : g_timer) t = Timer{0, 0, -1};
+     g_scieb = g_scipd = g_mcieb = g_mcipd = 0;
+     g_scilv[0] = g_scilv[1] = g_scilv[2] = 0;
+     g_samples = 0;
+     std::memset(g_stack, 0, sizeof g_stack);
++    std::memset(g_stack_delay, 0, sizeof g_stack_delay);
++    g_stack_delay_skip = 0;
+     g_dsp = Dsp{};
+     g_rbl = 8192;
+     g_rbp = 0;
+@@ -622,10 +643,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
+ 
+ int scsp_cpu_level() { return g_cpu_level; }
+ 
++uint32_t scsp_get_internal(ScspField f, int i) {
++    const Slot& s = g_slot[i & 31];
++    switch (f) {
++    case SCSP_ADDR: return s.addr;
++    case SCSP_FRAC: return s.frac;
++    case SCSP_IN_LOOP: return s.in_loop;
++    case SCSP_REVERSE: return s.reverse;
++    case SCSP_PLAYING: return s.playing;
++    case SCSP_ENV: return s.env;
++    case SCSP_ENV_PHASE: return (uint32_t)s.env_phase;
++    case SCSP_COUNTER: return g_counter;
++    case SCSP_KEY_EXECUTE: return g_key_execute;
++    case SCSP_STACK: return (uint32_t)g_stack[i & 63];
++    case SCSP_STACK_POS: return g_stack_pos;
++    case SCSP_STACK_DELAY: return (uint32_t)g_stack_delay[i & 3];
++    case SCSP_DSP_TEMP: return (uint32_t)g_dsp.temp[i & 127];
++    case SCSP_DSP_MEMS: return (uint32_t)g_dsp.mems[i & 31];
++    case SCSP_DSP_MIXS: return (uint32_t)g_dsp.mixs[i & 15];
++    case SCSP_DSP_EFREG: return (uint32_t)(int32_t)g_dsp.efreg[i & 15];
++    case SCSP_DSP_DEC: return g_dsp.dec;
++    case SCSP_LFO_PHASE: return s.lfo;
++    case SCSP_LFO_TIME: return s.lfo_time;
++    case SCSP_LOST: return s.lost;
++    case SCSP_DSP_ACC: return (uint32_t)g_dsp.acc;
++    case SCSP_DSP_FRC: return (uint32_t)g_dsp.frc;
++    case SCSP_DSP_YREG: return (uint32_t)g_dsp.yreg;
++    case SCSP_DSP_ADRS: return g_dsp.adrs;
++    case SCSP_DSP_MEMVAL: return (uint32_t)g_dsp.memval;
++    case SCSP_SAMPLES: return (uint32_t)g_samples;
++    case SCSP_TIMER_CTL: return (uint32_t)g_timer[i % 3].ctl;
++    case SCSP_TIMER_COUNTER: return (uint32_t)g_timer[i % 3].counter;
++    case SCSP_TIMER_RELOAD: return (uint32_t)g_timer[i % 3].reload;
++    case SCSP_SCIPD: return g_scipd;
++    case SCSP_MCIPD: return g_mcipd;
++    }
++    return 0;
++}
++void scsp_set_internal(ScspField f, int i, uint32_t v) {
++    Slot& s = g_slot[i & 31];
++    switch (f) {
++    case SCSP_ADDR: s.addr = (uint16_t)v; break;
++    case SCSP_FRAC: s.frac = v & 0x3FFF; break;
++    case SCSP_IN_LOOP: s.in_loop = v; break;
++    case SCSP_REVERSE: s.reverse = v; break;
++    case SCSP_PLAYING: s.playing = v; break;
++    case SCSP_ENV: s.env = v & 0x3FF; break;
++    case SCSP_ENV_PHASE: s.env_phase = (int)(v & 3); break;
++    case SCSP_COUNTER: g_counter = v; break;
++    case SCSP_KEY_EXECUTE: g_key_execute = v; break;
++    case SCSP_STACK: g_stack[i & 63] = (int32_t)v; break;
++    case SCSP_STACK_POS: g_stack_pos = v & 63; break;
++    case SCSP_STACK_DELAY: g_stack_delay[i & 3] = (int32_t)v; g_stack_delay_skip &= (uint8_t)~(1u << (i & 3)); break;
++    case SCSP_DSP_TEMP: g_dsp.temp[i & 127] = (int32_t)v; break;
++    case SCSP_DSP_MEMS: g_dsp.mems[i & 31] = (int32_t)v; break;
++    case SCSP_DSP_MIXS: g_dsp.mixs[i & 15] = (int32_t)v; break;
++    case SCSP_DSP_EFREG: g_dsp.efreg[i & 15] = (int16_t)v; break;
++    case SCSP_DSP_DEC: g_dsp.dec = v; break;
++    case SCSP_LFO_PHASE: s.lfo = (uint8_t)v; break;
++    case SCSP_LFO_TIME: s.lfo_time = (uint16_t)v; break;
++    case SCSP_LOST: s.lost = v; break;
++    case SCSP_DSP_ACC: g_dsp.acc = sext((int32_t)v, 26); break;
++    case SCSP_DSP_FRC: g_dsp.frc = (int32_t)(v & 0x1FFF); break;
++    case SCSP_DSP_YREG: g_dsp.yreg = sext((int32_t)v, 24); break;
++    case SCSP_DSP_ADRS: g_dsp.adrs = v & 0xFFF; break;
++    case SCSP_DSP_MEMVAL: g_dsp.memval = (int32_t)v; g_dsp.rd_wait = 0; break;
++    case SCSP_SAMPLES: g_samples = v; break;
++    case SCSP_TIMER_CTL: g_timer[i % 3].ctl = (int)(v & 7); break;
++    case SCSP_TIMER_COUNTER: g_timer[i % 3].counter = (int)(v & 0xFF); break;
++    case SCSP_TIMER_RELOAD: g_timer[i % 3].reload = (int)v; break;
++    case SCSP_SCIPD: g_scipd = v & 0x7FF; irq_update(); break;
++    case SCSP_MCIPD: g_mcipd = v & 0x7FF; irq_update(); break;
++    }
++}
++
+ uint32_t scsp_active_slots() {
+     uint32_t m = 0;
+     for (int i = 0; i < 32; ++i)
+-        if (g_slot[i].active) m |= 1u << i;
++        if (g_slot[i].playing && g_slot[i].env < 0x3C0) m |= 1u << i;
+     return m;
+ }
+ 
+@@ -641,62 +736,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
+     irq_update();
+     ++g_samples;
+ 
+-    float l = 0, r = 0;
++    // the envelopes move every other sample; then the keys written since the last sample
++    bool eg_tick = !(g_counter & 32);
+     for (Slot& s : g_slot) {
+-        int32_t stacked = 0;
+-        if (s.active) {
+-            int32_t v = slot_sample(s);
+-            float tl = g_tl_gain[s.tl()];
+-            float lv = (float)v * tl;
+-            l += lv * g_sdl_gain[s.disdl()] * g_pan_l[s.dipan()];
+-            r += lv * g_sdl_gain[s.disdl()] * g_pan_r[s.dipan()];
+-            if (s.imxl()) g_dsp.mixs[s.isel()] += (int32_t)(lv * g_sdl_gain[s.imxl()] * 16.0f);   // 20 bits
+-            stacked = (int32_t)(2.0f * (s.sdir() ? (float)v : lv));   // MAME's scale for FM
++        if (eg_tick) eg_step(s, g_counter >> 6);
++        if (s.lpslnk() && s.env_phase == EG_ATTACK && s.in_loop) s.env_phase = EG_DECAY1;
++    }
++    if (g_key_execute) {
++        g_key_execute = false;
++        for (Slot& t : g_slot) {
++            bool kb = t.r[0] & 0x0800;
++            if (kb && t.env_phase == EG_RELEASE) {
++                key_on(t);
++                sat_trace("SCSP key on %2d: SA %05X LSA %04X LEA %04X LP %d %s OCT %d FNS %03X TL %02X DISDL %d DIPAN %02X "
++                          "IMXL %d ISEL %d EFSDL %d EFPAN %02X AR %d D1R %d D2R %d RR %d DL %d MDL %d", (int)(&t - g_slot),
++                          t.sa(), t.lsa(), t.lea(), t.lpctl(), t.pcm8() ? "8" : "16", t.oct(), t.fns(), t.tl(), t.disdl(),
++                          t.dipan(), t.imxl(), t.isel(), t.efsdl(), t.efpan(), t.ar_r(), t.d1r_r(), t.d2r_r(), t.rr_r(),
++                          t.dl_r(), t.mdl());
++            } else if (!kb) t.env_phase = EG_RELEASE;
+         }
+-        if (!s.stwinh()) g_stack[g_stack_pos] = stacked;
+-        g_stack_pos = (g_stack_pos + 1) & 63;
+     }
++    g_counter += 32;
++    for (Slot& s : g_slot) lfo_tick(s);         // the level LFO reads the new position, the pitch LFO the old
++
++    // the DSP runs on the inputs the slots left in MIXS at the last sample, which then clears
+     g_dsp.exts[0] = exts_l;
+     g_dsp.exts[1] = exts_r;
+     dsp_step();
++    std::memset(g_dsp.mixs, 0, sizeof g_dsp.mixs);
++    int32_t l = 0, r = 0;
++    for (Slot& s : g_slot) {
++        int32_t stacked = 0;
++        if (s.playing) {
++            int32_t v = slot_sample(s);
++            l += send(v, s.disdl(), s.dipan(), 0);
++            r += send(v, s.disdl(), s.dipan(), 1);
++            if (s.imxl()) g_dsp.mixs[s.isel()] = (g_dsp.mixs[s.isel()] + ((v * (1 << s.imxl())) >> 3)) & 0xFFFFF;   // 20 bits
++            stacked = v;
++            // a released slot sounds out the sample its envelope reaches 0x3C0, then stops
++            if (s.env_phase == EG_RELEASE && s.env >= 0x3C0) { s.env = 0x3FF; s.playing = false; }
++        }
++        int k = (int)(&s - g_slot) & 3;
++        if (!(g_stack_delay_skip >> k & 1)) g_stack[(g_stack_pos - 4) & 63] = g_stack_delay[k];
++        g_stack_delay[k] = stacked;
++        g_stack_delay_skip = (uint8_t)((g_stack_delay_skip & ~(1u << k)) | (s.stwinh() ? 1u << k : 0));
++        g_stack_pos = (g_stack_pos + 1) & 63;
++    }
+     for (int i = 0; i < 16; ++i) {
+         const Slot& s = g_slot[i];
+-        if (!s.efsdl()) continue;
+-        l += g_dsp.efreg[i] * g_sdl_gain[s.efsdl()] * g_pan_l[s.efpan()];
+-        r += g_dsp.efreg[i] * g_sdl_gain[s.efsdl()] * g_pan_r[s.efpan()];
++        l += send(g_dsp.efreg[i], s.efsdl(), s.efpan(), 0);
++        r += send(g_dsp.efreg[i], s.efsdl(), s.efpan(), 1);
+     }
+     for (int i = 0; i < 2; ++i) {
+         const Slot& s = g_slot[16 + i];
+-        if (!s.efsdl()) continue;
+-        l += g_dsp.exts[i] * g_sdl_gain[s.efsdl()] * g_pan_l[s.efpan()];
+-        r += g_dsp.exts[i] * g_sdl_gain[s.efsdl()] * g_pan_r[s.efpan()];
++        l += send(g_dsp.exts[i], s.efsdl(), s.efpan(), 0);
++        r += send(g_dsp.exts[i], s.efsdl(), s.efpan(), 1);
+     }
+-    float mv = g_mvol[g_com[0] & 15];
+-    // 27/32 of the mix, as Mednafen scales the SCSP's output.
+-    auto dac = [](float v) { return (int16_t)((std::clamp((int32_t)v, -32768, 32767) * 27 + 16) >> 5); };
+-    out[0] = dac(l * mv);
+-    out[1] = dac(r * mv);
+-}
+-
+-// An LFO's tables by their number among the tables of their kind.
+-template <size_t N>
+-static void lfo_table(State& s, const int*& p, int (&tables)[N][256]) {
+-    int8_t k = -1;
+-    for (size_t i = 0; i < N; ++i)
+-        if (p == tables[i]) k = (int8_t)i;
+-    s(k);
+-    if (s.loading) p = k < 0 ? nullptr : tables[k];
++    // the master volume, then 27/32 of it, as Mednafen scales the SCSP's output
++    int32_t mv = kMasterVolume[g_com[0] & 15];
++    auto dac = [&](int32_t v) { return (int16_t)((std::clamp((v * mv) >> 8, -32768, 32767) * 27 + 16) >> 5); };
++    out[0] = dac(l);
++    out[1] = dac(r);
+ }
+ 
+ void scsp_state(State& s) {
+     s(g_sound_ram);
+     for (Slot& sl : g_slot) {
+-        s(sl.r), s(sl.active), s(sl.keyed), s(sl.backwards), s(sl.pos), s(sl.eg_state), s(sl.eg_vol);
+-        s(sl.ar), s(sl.d1r), s(sl.d2r), s(sl.rr), s(sl.dl);
+-        for (Lfo* l : {&sl.plfo, &sl.alfo}) s(l->phase), s(l->step);
+-        lfo_table(s, sl.plfo.table, g_plfo), lfo_table(s, sl.plfo.scale, g_pscale);
+-        lfo_table(s, sl.alfo.table, g_alfo), lfo_table(s, sl.alfo.scale, g_ascale);
++        s(sl.r), s(sl.playing), s(sl.in_loop), s(sl.reverse), s(sl.lost), s(sl.addr), s(sl.frac), s(sl.env_phase), s(sl.env);
++        s(sl.lfo), s(sl.lfo_time);
+     }
+     s(g_com), s(g_timer), s(g_scieb), s(g_scipd), s(g_scilv), s(g_mcieb), s(g_mcipd), s(g_main_line);
+-    s(g_samples), s(g_stack), s(g_stack_pos), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
++    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_stack_delay), s(g_stack_delay_skip), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
+ }
+diff --git a/runtime/src/sound/sound.cpp b/runtime/src/sound/sound.cpp
+index 319a3f3..5d13f11 100644
+--- a/runtime/src/sound/sound.cpp
++++ b/runtime/src/sound/sound.cpp
+@@ -25,6 +25,7 @@
+ #include "sound.h"
+ #include "host.h"
+ #include "video.h"
++#include <cstdlib>
+ #include <cstdio>
+ #include <vector>
+ extern "C" {
+@@ -38,6 +39,10 @@ static bool g_on;                                // SNDON: the 68000 runs
+ static bool g_audio;                             // a host device takes the samples
+ static uint64_t g_samples;                       // made since power-on
+ static int g_debt;                               // 68000 cycles owed to the current sample
++static int g_part;                               // of the current sample's 256 cycles, those given already
++// SF3_SCSP_SYNC=0: the SH-2's sound accesses no longer bring the 68000 and the SCSP up to its
++// cycle (they run only at the device polls, as before), for A/B comparisons.
++static const bool kSync = [] { const char* v = std::getenv("SF3_SCSP_SYNC"); return !v || std::atoi(v) != 0; }();
+ static std::vector<int16_t> g_out;               // made this poll, interleaved
+ static FILE* g_wav;
+ static uint64_t g_wav_frames;
+@@ -66,16 +71,95 @@ static void bus_write(uint32_t a, uint32_t v, int size) {
+     if (a < 0x200000) scsp_write(a & 0xFFF, v, size);
+ }
+ 
++// Each bus cycle of the 68000 (an instruction word fetched, a byte or word read or written; a long
++// is two) takes 2 clocks more than the 68000 manual's 4: Beetle's 68000, timed as a black box with
++// loops of single instructions, runs at the manual's counts plus 2 per bus access, sound RAM and
++// SCSP registers alike. Musashi counts the manual's clocks without wait states, so the callbacks
++// take the 2 from its timeslice. A taken jump refills the 68000's two-word prefetch queue: the
++// instruction reads two words where Musashi fetched its own one (BRA.S, JMP/JSR (An), RTS, RTE),
++// so a one-word instruction that changes the flow costs one access more. An interrupt's
++// acknowledge cycle and the refill at its handler are three more.
++extern "C" int m68ki_remaining_cycles;
++static constexpr int kWait = 2;
++static uint32_t g_fetch_next;                    // the address after the last word fetched
++static int g_fetch_words;                        // words fetched by the current instruction
++static bool g_interrupted;                       // an interrupt came between two instructions
++static inline void wait(int accesses) { m68ki_remaining_cycles -= kWait * accesses; }
++
+ extern "C" {
+-unsigned int m68k_read_memory_8(unsigned int a) { return bus_read(a, 1); }
+-unsigned int m68k_read_memory_16(unsigned int a) { return bus_read(a, 2); }
+-unsigned int m68k_read_memory_32(unsigned int a) { return bus_read(a, 4); }
++unsigned int m68k_read_memory_8(unsigned int a) { wait(1); return bus_read(a, 1); }
++unsigned int m68k_read_memory_16(unsigned int a) { wait(1); return bus_read(a, 2); }
++unsigned int m68k_read_memory_32(unsigned int a) { wait(2); return bus_read(a, 4); }
++unsigned int m68k_read_immediate_16(unsigned int a) { wait(1); g_fetch_words += 1; g_fetch_next = a + 2; return bus_read(a, 2); }
++unsigned int m68k_read_immediate_32(unsigned int a) { wait(2); g_fetch_words += 2; g_fetch_next = a + 4; return bus_read(a, 4); }
++unsigned int m68k_read_pcrelative_8(unsigned int a) { wait(1); return bus_read(a, 1); }
++unsigned int m68k_read_pcrelative_16(unsigned int a) { wait(1); return bus_read(a, 2); }
++unsigned int m68k_read_pcrelative_32(unsigned int a) { wait(2); return bus_read(a, 4); }
+ unsigned int m68k_read_disassembler_8(unsigned int a) { return bus_read(a, 1); }
+ unsigned int m68k_read_disassembler_16(unsigned int a) { return bus_read(a, 2); }
+ unsigned int m68k_read_disassembler_32(unsigned int a) { return bus_read(a, 4); }
+-void m68k_write_memory_8(unsigned int a, unsigned int v) { bus_write(a, v, 1); }
+-void m68k_write_memory_16(unsigned int a, unsigned int v) { bus_write(a, v, 2); }
+-void m68k_write_memory_32(unsigned int a, unsigned int v) { bus_write(a, v, 4); }
++void m68k_write_memory_8(unsigned int a, unsigned int v) { wait(1); bus_write(a, v, 1); }
++void m68k_write_memory_16(unsigned int a, unsigned int v) { wait(1); bus_write(a, v, 2); }
++void m68k_write_memory_32(unsigned int a, unsigned int v) { wait(2); bus_write(a, v, 4); }
++}
++
++// Instructions whose time on Beetle's 68000 (black box: a loop of the one instruction, timed against
++// the same loop with nothing in it) differs from Musashi's plus the bus waits above, in cycles.
++static int8_t g_adjust[0x10000];
++
++static void adjust_setup() {
++    for (uint32_t op = 0; op < 0x10000; ++op) {
++        int d = 0, mode = op >> 3 & 7, size = op >> 12, dmode = op >> 6 & 7;
++        if (size >= 1 && size <= 3 && dmode == 4) d = 2;                           // MOVE to -(An)
++        else if ((op & 0xFF38) == 0x4220 || (op & 0xFF38) == 0x4260 || (op & 0xFF38) == 0x42A0) d = 2; // CLR -(An)
++        else if ((op & 0xFFF8) == 0x40E0) d = 2;                                    // MOVE SR,-(An)
++        else if ((op & 0xF1F8) == 0x5048) d = 4;                                    // ADDQ.W #,An
++        else if ((op & 0xF1FF) == 0xD0FC || (op & 0xF1FF) == 0x90FC) d = -2;      // ADDA.W/SUBA.W #imm,An
++        else if (((op & 0xF1F0) == 0xD1C0 || (op & 0xF1F0) == 0x91C0) && mode <= 1) d = 2; // ADDA.L/SUBA.L Rn,An
++        else if (((op & 0xF1F0) == 0xD080 || (op & 0xF1F0) == 0x9080) && mode <= 1) d = 2; // ADD.L/SUB.L Rn,Dn
++        else if (((op & 0xF1F8) == 0xC080 || (op & 0xF1F8) == 0x8080)) d = 2;     // AND.L/OR.L Dn,Dn
++        else if ((op & 0xF1F0) == 0xB080 && mode <= 1) d = -2;                      // CMP.L Rn,Dn
++        else if ((op & 0xF1FF) == 0xB0BC) d = -2;                                   // CMP.L #imm,Dn
++        else if (((op & 0xF1C0) == 0xB0C0 || (op & 0xF1C0) == 0xB1C0) && mode <= 1) d = -2; // CMPA Rn,An
++        else if ((op & 0xFFF8) == 0x0800 || (op & 0xF1F8) == 0x0100) d = -2;      // BTST Dn
++        else if ((op & 0xFFF8) == 0x08C0 || (op & 0xF1F8) == 0x01C0) d = -4;      // BSET Dn
++        else if ((op & 0xFFF8) == 0x0880 || (op & 0xF1F8) == 0x0180) d = -6;      // BCLR Dn
++        else if ((op & 0xFF00) == 0x6100) d = -2;                                   // BSR
++        else if (op == 0x4E75) d = -4;                                              // RTS
++        else if (op == 0x4E73) d = -4;                                              // RTE
++        else if ((op & 0xFFF8) == 0x4E90) d = -8;                                   // JSR (An)
++        else if (op == 0x4EBA) d = -4;                                              // JSR d16(PC)
++        else if (op == 0x4EFB) d = -4;                                              // JMP d8(PC,Xn)
++        else if (op == 0x023C) d = 2;                                               // ANDI #,CCR
++        else if ((op & 0xFF80) == 0x4C80 && mode == 3) d = 2;                       // MOVEM (An)+,regs
++        g_adjust[op] = (int8_t)d;
++    }
++}
++
++uint32_t* g_m68k_pc_hist;                       // a profile of the 68000's PCs (scsp_replay), or null
++
++static void instr_hook(unsigned int pc) {
++    pc &= 0xFFFFFF;
++    if (g_m68k_pc_hist) ++g_m68k_pc_hist[(pc >> 1) & 0x3FFFF];
++    if (g_interrupted) g_interrupted = false;
++    else if (pc != (g_fetch_next & 0xFFFFFF) && g_fetch_words < 2) wait(2 - g_fetch_words);
++    g_fetch_words = 0;
++    g_fetch_next = pc;
++    m68ki_remaining_cycles -= g_adjust[bus_read(pc, 2)];
++}
++
++static int int_ack(int) {
++    wait(3);
++    g_interrupted = true;
++    return M68K_INT_ACK_AUTOVECTOR;
++}
++
++static void cpu_setup() {
++    m68k_init();
++    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
++    m68k_set_instr_hook_callback(instr_hook);
++    m68k_set_int_ack_callback(int_ack);
++    adjust_setup();
+ }
+ 
+ void sound_irq_changed() {
+@@ -97,8 +181,7 @@ static void wav_header() {
+ }
+ 
+ void sound_init() {
+-    m68k_init();
+-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
++    cpu_setup();
+     scsp_reset();
+     std::string wav = movie_on() ? movie_wav() : g_cfg.wav;
+     if (!wav.empty()) {
+@@ -113,19 +196,42 @@ void sound_power(bool on) {
+     if (on && !g_on) {
+         m68k_pulse_reset();
+         g_debt = 0;
++        g_part = 0;
+         sat_trace("68000 reset: SSP %06X, PC %06X", m68k_get_reg(nullptr, M68K_REG_SP), m68k_get_reg(nullptr, M68K_REG_PC));
+     }
+     g_on = on;
+     if (on) m68k_set_irq((unsigned)scsp_cpu_level());
+ }
+ 
+-void sound_tick() {
+-    uint64_t due = sat_now() * 441 / 10000000;   // samples at 44 100 Hz
++void sound_replay_cpu(bool on) {
++    static bool ready;
++    if (!ready) { cpu_setup(); ready = true; }
++    g_on = on;
++    g_debt = 0;
++    if (on) m68k_set_irq((unsigned)scsp_cpu_level());
++}
++
++void sound_replay_first_slice(int cycles) { g_debt = cycles - 256; g_part = 0; }
++
++void sound_replay_sample(int16_t ext_l, int16_t ext_r, int16_t out[2]) {
++    if (g_on) {
++        g_debt += 256;
++        if (g_debt > 0) g_debt -= m68k_execute(g_debt);
++    }
++    scsp_sample(ext_l, ext_r, out);
++}
++
++// The samples due by NOW (virtual ns), made into g_out; with PARTIAL, the 68000 also runs the cycles
++// of the next sample up to NOW (the SCSP's state between samples is the 68000's alone).
++static void catch_up(uint64_t now, bool partial) {
++    const uint64_t t = now * 441;                // in units of 1/10 000 000 of a sample
++    const uint64_t due = t / 10000000;           // samples at 44 100 Hz
+     while (g_samples < due) {
+         if (g_on) {
+-            g_debt += 256;
++            g_debt += 256 - g_part;
+             if (g_debt > 0) g_debt -= m68k_execute(g_debt);
+         }
++        g_part = 0;
+         int16_t cd[2], s[2];
+         cd_audio_sample(cd);
+         scsp_sample(cd[0], cd[1], s);
+@@ -134,6 +240,22 @@ void sound_tick() {
+         g_out.push_back(s[1]);
+         ++g_samples;
+     }
++    if (!partial || !g_on || g_samples != due) return;
++    const int at = (int)((t % 10000000) * 256 / 10000000);   // 68000 cycles into the sample
++    if (at <= g_part) return;
++    g_debt += at - g_part;
++    g_part = at;
++    if (g_debt > 0) g_debt -= m68k_execute(g_debt);
++}
++
++// The SH-2 is about to touch sound RAM or the SCSP: what the 68000 and the SCSP did before its
++// cycle is done first, so a command it writes or a flag it reads meets them at the right sample.
++static inline void sync_to_cpu() {
++    if (kSync) catch_up(sat_now_cpu(), true);
++}
++
++void sound_tick() {
++    catch_up(sat_now(), false);
+     if (g_out.empty()) return;
+     if (g_audio) host_audio_push(g_out.data(), (int)g_out.size() / 2);
+     if (g_wav) {
+@@ -158,18 +280,24 @@ void sound_close() {
+ 
+ // ---- the SH-2's side: sound RAM at 0x05A00000, the registers at 0x05B00000 ------------------------
+ uint32_t sound_read(uint32_t a, int size) {
++    sync_to_cpu();
+     if (a < 0x05B00000u) return mem_rd(g_sound_ram, a & 0x7FFFF, size);
+     return scsp_read(a & 0xFFF, size);
+ }
+ 
+ void sound_write(uint32_t a, uint32_t v, int size) {
++    sync_to_cpu();
+     if (a < 0x05B00000u) { mem_wr(g_sound_ram, a & 0x7FFFF, v, size); return; }
+     scsp_write(a & 0xFFF, v, size);
+ }
+ 
+ 
+ void sound_state(State& s) {
+-    s(g_on), s(g_samples), s(g_debt), s(g_peak_frames);
++    // A sample begun (g_part cycles given) is kept as the same debt with none given: the next
++    // sample's 256 then make up the same cycles.
++    int debt = g_debt - g_part;
++    s(g_on), s(g_samples), s(debt), s(g_peak_frames);
++    if (s.loading) g_debt = debt, g_part = 0;
+     std::vector<uint8_t> cpu(m68k_state_size());
+     m68k_state_get(cpu.data());
+     s.vec(cpu);
+diff --git a/runtime/src/sound/sound.h b/runtime/src/sound/sound.h
+index 1786242..dfe275c 100644
+--- a/runtime/src/sound/sound.h
++++ b/runtime/src/sound/sound.h
+@@ -12,6 +12,32 @@ void scsp_write(uint32_t off, uint32_t v, int size);
+ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]);   // one sample at 44 100 Hz
+ int  scsp_cpu_level();                                // the 68000's interrupt level (0: none)
+ uint32_t scsp_active_slots();                         // a mask, for the log
++// The SCSP's inner state, set from outside (scsp_replay: another emulator's snapshot). Per slot
++// (index 0-31) unless noted.
++enum ScspField {
++    SCSP_ADDR, SCSP_FRAC, SCSP_IN_LOOP, SCSP_REVERSE, SCSP_PLAYING, SCSP_ENV, SCSP_ENV_PHASE,
++    SCSP_COUNTER,                                     // the envelope clock (32 a sample); index unused
++    SCSP_KEY_EXECUTE,                                 // a KYONEX pending; index unused
++    SCSP_STACK,                                       // the sound stack, index 0-63
++    SCSP_STACK_POS,
++    SCSP_DSP_TEMP, SCSP_DSP_MEMS, SCSP_DSP_MIXS, SCSP_DSP_EFREG, SCSP_DSP_DEC,
++    SCSP_LFO_PHASE,
++    SCSP_DSP_ACC, SCSP_DSP_FRC, SCSP_DSP_YREG, SCSP_DSP_ADRS, SCSP_DSP_MEMVAL,   // the DSP's registers
++    SCSP_SAMPLES, SCSP_TIMER_CTL, SCSP_TIMER_COUNTER, SCSP_TIMER_RELOAD,        // the timers (index 0-2; reload -1 = none)
++    SCSP_SCIPD, SCSP_MCIPD,                                                     // pending interrupts
++    SCSP_STACK_DELAY,                                 // the outputs of the last four slots on their way to the stack (index slot & 3)
++    SCSP_LFO_TIME,                                    // samples to the LFO's next step (SCSP_LFO_PHASE: its 8-bit position)
++    SCSP_LOST,                                        // went backwards past the wave's start, unturned
++};
++void scsp_set_internal(ScspField f, int index, uint32_t v);
++uint32_t scsp_get_internal(ScspField f, int index);
++// The 68000 run beside the SCSP outside the machine (tests): on = it runs 256 cycles before each
++// sound_replay_sample, from the registers set with m68k_set_reg (no reset).
++void sound_replay_cpu(bool on);
++// The 68000 runs CYCLES (1-256) before the next sample instead of a whole sample: the phase of a
++// snapshot taken mid-sample. Call after sound_replay_cpu(true).
++void sound_replay_first_slice(int cycles);
++void sound_replay_sample(int16_t ext_l, int16_t ext_r, int16_t out[2]);
+ 
+ // ---- the 68000 and the pace (sound.cpp) ----------------------------------------------------
+ void sound_irq_changed();                             // the SCSP's interrupt to the 68000 moved
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
 index 8589d33..bee2cc3 100644
 --- a/runtime/src/video/vdp1.cpp
@@ -3105,7 +4528,7 @@ index 4c8bcb1..e382fc0 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..c9182c1 100644
+index 88d1642..99e3565 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -3159,7 +4582,23 @@ index 88d1642..c9182c1 100644
  }
  
  static void vblank_in(uint64_t now) {
-@@ -144,6 +159,10 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -96,6 +111,15 @@ static void vblank_in(uint64_t now) {
+     host_pace(now);
+ }
+ 
++// When the next VBlank edge can come: line 0 (VBlank-OUT) or a line VBlank-IN starts at in any
++// mode (224, 240, 256). The master's slices end there, so the interrupt is taken when it is raised,
++// not up to a slice later. Only the time matters, not the mode, so that a state's slice comes back.
++uint64_t video_next_vblank_edge_ns(uint64_t now) {
++    const uint64_t la = now / kLineNs, base = la - la % kLines, line = la % kLines;
++    const uint64_t next = line < 224 ? 224 : line < 240 ? 240 : line < 256 ? 256 : kLines;
++    return (base + next) * kLineNs;
++}
++
+ void video_tick(uint64_t now) {
+     uint64_t target = now / kLineNs;
+     while (g_line_abs < target) {
+@@ -144,6 +168,10 @@ uint32_t video_read(uint32_t a, int size) {
  
  void video_write(uint32_t a, uint32_t v, int size) {
      if (a < 0x05B01000u) { sound_write(a, v, size); return; }
@@ -3233,6 +4672,19 @@ index ebaa466..c68e655 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
+index 39eb423..55cef3a 100644
+--- a/runtime/tests/CMakeLists.txt
++++ b/runtime/tests/CMakeLists.txt
+@@ -8,5 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
+   set(CMAKE_BUILD_TYPE Release)
+ endif()
+ include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
+-add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp scsp_test.cpp)
+ target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
++add_executable(scsp_replay scsp_replay.cpp no_modules.cpp)
++target_link_libraries(scsp_replay saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3266,6 +4718,362 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/scsp_replay.cpp b/runtime/tests/scsp_replay.cpp
+new file mode 100644
+index 0000000..64371d5
+--- /dev/null
++++ b/runtime/tests/scsp_replay.cpp
+@@ -0,0 +1,99 @@
++// SCSP replay: the sound chip alone, outside any game, from a script, so the same registers and
++// sound RAM given to a reference can be compared sample for sample (no 68000, no game timing).
++//   scsp_replay SCRIPT.bin OUT.raw
++// SCRIPT.bin: sound RAM (512 KiB, as the bus sees it), then records of little-endian u32 words:
++//   1 OFF VALUE      a 16-bit register write (OFF 0x000-0xFFF)
++//   2 N              N samples, appended to OUT.raw as 16-bit little-endian stereo
++//   3 L R            the external input (EXTS 0-1) from here on
++//   4 FIELD I V      scsp_set_internal(FIELD, I, V): inner state (sound.h's ScspField)
++//   5 FIELD N        print scsp_get_internal(FIELD, 0..N-1) on a line to stdout
++//   6 REG V          the 68000's register REG (Musashi's m68k_register_t) = V
++//   7 ON             the 68000 runs (1) or not (0) beside the samples, from the registers given
++//   8 ADDR N         print N bytes of sound RAM from ADDR as hex on a line to stdout
++//   9                print the 68000's registers D0-D7 A0-A7 PC SR USP ISP on a line to stdout
++#include "../src/sound/sound.h"
++#include "m68k.h"
++#include <cstdio>
++#include <algorithm>
++#include <cstring>
++#include <vector>
++
++int main(int argc, char** argv) {
++    if (argc < 3) { std::fprintf(stderr, "usage: scsp_replay SCRIPT.bin OUT.raw\n"); return 2; }
++    FILE* f = std::fopen(argv[1], "rb");
++    if (!f) return 1;
++    std::vector<uint8_t> in;
++    uint8_t buf[65536];
++    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) in.insert(in.end(), buf, buf + n);
++    std::fclose(f);
++    if (in.size() < sizeof g_sound_ram) { std::fprintf(stderr, "short script\n"); return 1; }
++    scsp_reset();
++    sound_replay_cpu(false);    // Musashi's tables, before any register is set
++    std::memcpy(g_sound_ram, in.data(), sizeof g_sound_ram);
++    FILE* o = std::fopen(argv[2], "wb");
++    if (!o) return 1;
++    auto word = [&](size_t& p) { uint32_t v; std::memcpy(&v, &in[p], 4); p += 4; return v; };
++    int16_t ext[2] = {0, 0};
++    for (size_t p = sizeof g_sound_ram; p + 4 <= in.size();) {
++        uint32_t op = word(p);
++        if (op == 1) { uint32_t off = word(p), v = word(p); scsp_write(off, v, 2); }
++        else if (op == 2) {
++            for (uint32_t i = word(p); i--;) {
++                int16_t s[2];
++                sound_replay_sample(ext[0], ext[1], s);
++                uint8_t le[4] = {(uint8_t)s[0], (uint8_t)(s[0] >> 8), (uint8_t)s[1], (uint8_t)(s[1] >> 8)};
++                std::fwrite(le, 1, 4, o);
++            }
++        } else if (op == 3) { ext[0] = (int16_t)word(p); ext[1] = (int16_t)word(p); }
++        else if (op == 5) {     // print a field for indices 0..N-1 to stdout
++            uint32_t fl = word(p), n = word(p);
++            std::printf("F%u", fl);
++            for (uint32_t i = 0; i < n; ++i) std::printf(" %d", (int)scsp_get_internal((ScspField)fl, (int)i));
++            std::printf("\n");
++        }
++        else if (op == 6) { uint32_t reg = word(p), v = word(p); m68k_set_reg((m68k_register_t)reg, v); }
++        else if (op == 7) sound_replay_cpu(word(p) != 0);
++        else if (op == 14) {    // print N register words from OFF (scsp_read)
++            uint32_t off = word(p), n = word(p);
++            std::printf("W%u", off);
++            for (uint32_t i = 0; i < n; ++i) std::printf(" %x", scsp_read(off + 2 * i, 2));
++            std::printf("\n");
++        }
++        else if (op == 13) { uint32_t a = word(p), v = word(p); g_sound_ram[a & 0x7FFFF] = (uint8_t)v; }   // a byte the SH-2 writes (byte address)
++        else if (op == 8) {
++            uint32_t a = word(p), n = word(p);
++            std::printf("M%u ", a);
++            for (uint32_t i = 0; i < n; ++i) std::printf("%02x", g_sound_ram[(a + i) & 0x7FFFF]);
++            std::printf("\n");
++        }
++        else if (op == 9) {
++            std::printf("R");
++            for (int i = 0; i <= 20; ++i) if (i != 18) std::printf(" %x", m68k_get_reg(nullptr, (m68k_register_t)i));
++            std::printf("\n");
++        }
++        else if (op == 10) {    // profile the 68000's PCs from here on (N = 1) or print the top N
++            extern uint32_t* g_m68k_pc_hist;
++            static std::vector<uint32_t> hist(0x40000);
++            uint32_t n = word(p);
++            if (n == 1) { std::fill(hist.begin(), hist.end(), 0); g_m68k_pc_hist = hist.data(); }
++            else {
++                std::vector<uint32_t> idx(hist.size());
++                for (uint32_t i = 0; i < idx.size(); ++i) idx[i] = i;
++                std::partial_sort(idx.begin(), idx.begin() + n, idx.end(), [&](uint32_t a, uint32_t b) { return hist[a] > hist[b]; });
++                for (uint32_t k = 0; k < n && hist[idx[k]]; ++k) {
++                    char s[128]; unsigned len = m68k_disassemble(s, idx[k] * 2, M68K_CPU_TYPE_68000);
++                    printf("P %05X %9u %u %s\n", idx[k] * 2, hist[idx[k]], len, s);
++                }
++            }
++        }
++        else if (op == 11) {    // disassemble N instructions from ADDR
++            uint32_t a = word(p), n = word(p);
++            for (uint32_t k = 0; k < n; ++k) { char s[128]; unsigned len = m68k_disassemble(s, a, M68K_CPU_TYPE_68000); printf("D %05X %s\n", a, s); a += len; }
++        }
++        else if (op == 12) sound_replay_first_slice((int)word(p));   // 68000 cycles before the next sample
++        else if (op == 4) { uint32_t fl = word(p), i = word(p), v = word(p); scsp_set_internal((ScspField)fl, (int)i, v); }
++        else { std::fprintf(stderr, "bad op %u\n", op); return 1; }
++    }
++    std::fclose(o);
++    return 0;
++}
+diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
+new file mode 100644
+index 0000000..9a4d3a7
+--- /dev/null
++++ b/runtime/tests/scsp_test.cpp
+@@ -0,0 +1,245 @@
++// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
++// and save states only).
++#include <cstring>
++#include "m68k.h"
++#include "../src/sound/sound.h"
++#include "saturn.h"
++#include <cstdio>
++#include "test.h"
++
++// A released slot stops once its envelope reaches 0x3C0: it still plays that sample, then its
++// attenuation reads 0x3FF and it no longer runs. Below 0x3C0 it keeps going.
++TEST(a_released_slot_stops_when_its_envelope_reaches_0x3C0) {
++    scsp_reset();
++    int16_t out[2];
++    scsp_set_internal(SCSP_PLAYING, 0, 1); scsp_set_internal(SCSP_ENV_PHASE, 0, 3); scsp_set_internal(SCSP_ENV, 0, 0x3BF);
++    scsp_set_internal(SCSP_PLAYING, 1, 1); scsp_set_internal(SCSP_ENV_PHASE, 1, 3); scsp_set_internal(SCSP_ENV, 1, 0x3C0);
++    scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_PLAYING, 0), 1u);     // RR 0: the envelope holds
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0), 0x3BFu);
++    CHECK_EQ(scsp_get_internal(SCSP_PLAYING, 1), 0u);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 1), 0x3FFu);
++}
++
++// The 68000's loop BODY; addq.l #1,d7; bra.s back, run for 735 samples (256 cycles each) with
++// interrupts masked: the iterations, D7.
++static uint32_t loop_iterations(const char* hex) {
++    scsp_reset();
++    sound_replay_cpu(false);
++    std::memset(g_sound_ram, 0, sizeof g_sound_ram);
++    uint8_t code[64]; size_t n = 0;
++    for (const char* p = hex; p[0] && p[1]; p += 2) { unsigned b; sscanf(p, "%2x", &b); code[n++] = (uint8_t)b; }
++    code[n++] = 0x52; code[n++] = 0x87;                  // addq.l #1,d7
++    code[n] = 0x60; code[n + 1] = (uint8_t)-(int)(n + 2); n += 2;   // bra.s to the body
++    std::memcpy(g_sound_ram + 0x7E000, code, n);
++    for (int r = M68K_REG_D0; r <= M68K_REG_A6; ++r) m68k_set_reg((m68k_register_t)r, r >= M68K_REG_A0 ? 0x70000 : 0);
++    m68k_set_reg(M68K_REG_SR, 0x2700);
++    m68k_set_reg(M68K_REG_A7, 0x7F000);
++    m68k_set_reg(M68K_REG_PC, 0x7E000);
++    sound_replay_cpu(true);
++    int16_t out[2];
++    for (int i = 0; i < 735; ++i) sound_replay_sample(0, 0, out);
++    sound_replay_cpu(false);
++    return m68k_get_reg(nullptr, M68K_REG_D7);
++}
++
++// Cycles per iteration on Beetle (the loop's own addq.l and bra.s are 24): the 68000 manual's
++// counts plus 2 per bus access, and the instructions Beetle times otherwise.
++TEST(the_sound_68000_runs_loops_at_beetles_speed) {
++    struct { const char* body; uint32_t cycles; } cases[] = {
++        {"", 24},                                // addq.l 8 + 2, bra.s 10 + 4
++        {"4e71", 30},                            // nop
++        {"3010", 36},                            // move.w (a0),d0
++        {"2010", 42},                            // move.l (a0),d0
++        {"30390007 0000", 48},                   // move.w $70000,d0
++        {"d081", 34},                            // add.l d1,d0
++        {"b081", 30},                            // cmp.l d1,d0
++        {"d2fc0060", 40},                        // adda.w #$60,a1
++        {"544a", 34},                            // addq.w #2,a2
++        {"3100", 38},                            // move.w d0,-(a0)
++        {"08810003", 36},                        // bclr #3,d1
++        {"61026002 4e75", 82},                   // bsr.s; bra.s; rts
++        {"487a0004 4e75", 66},                   // pea; rts
++        {"4eba0004 6002 4e75", 80},              // jsr d16(pc); bra.s; rts
++        {"4efb0002", 38},                        // jmp 2(pc,d0.w)
++    };
++    for (auto& c : cases) {
++        char hex[64]; size_t k = 0;
++        for (const char* p = c.body; *p; ++p) if (*p != ' ') hex[k++] = *p;
++        hex[k] = 0;
++        uint32_t it = loop_iterations(hex), want = 735 * 256 / c.cycles;
++        if (it + 1 < want || it > want + 1) CHECK_EQ(it, want);
++    }
++}
++
++// Timer A polled the way the sound driver does: clear SCIRE bit 6, load TIMA, then count polls
++// of SCIPD bit 6 until the timer overflows; D7 per tick is stored at 0x70000. Beetle's counts fit
++// one rule (checked offline against 11 TIMA/prescale cases): the timer steps at each sample
++// boundary whose global sample number is a multiple of the prescale, a read sees the state at
++// the time of its access, and loading TIMA does not restart the prescaler.
++static void timer_a_polls(uint8_t tima, uint8_t ctl, uint16_t* counts, int n) {
++    scsp_reset();
++    sound_replay_cpu(false);
++    std::memset(g_sound_ram, 0, sizeof g_sound_ram);
++    const uint8_t code[] = {
++        0x4b, 0xf9, 0x00, 0x10, 0x00, 0x00,          // lea $100000,a5
++        0x41, 0xf9, 0x00, 0x07, 0x00, 0x00,          // lea $70000,a0
++        0x3b, 0x7c, 0x00, 0x40, 0x04, 0x22,          // move.w #$40,$422(a5)   SCIRE
++        0x3b, 0x7c, ctl, tima, 0x04, 0x18,           // move.w #ctl:tima,$418(a5)
++        0x7e, 0x00,                                  // moveq #0,d7
++        0x52, 0x87,                                  // addq.l #1,d7
++        0x30, 0x2d, 0x04, 0x20,                      // move.w $420(a5),d0    SCIPD
++        0x08, 0x00, 0x00, 0x06,                      // btst #6,d0
++        0x67, 0xf4,                                  // beq.s addq
++        0x30, 0xc7,                                  // move.w d7,(a0)+
++        0x60, 0xe2,                                  // bra.s SCIRE
++    };
++    std::memcpy(g_sound_ram + 0x7E000, code, sizeof code);
++    for (int r = M68K_REG_D0; r <= M68K_REG_A6; ++r) m68k_set_reg((m68k_register_t)r, 0);
++    m68k_set_reg(M68K_REG_SR, 0x2700);
++    m68k_set_reg(M68K_REG_A7, 0x7F000);
++    m68k_set_reg(M68K_REG_PC, 0x7E000);
++    sound_replay_cpu(true);
++    int16_t out[2];
++    for (int i = 0; i < 735; ++i) sound_replay_sample(0, 0, out);
++    sound_replay_cpu(false);
++    for (int i = 0; i < n; ++i) counts[i] = (uint16_t)(g_sound_ram[0x70000 + 2 * i] << 8 | g_sound_ram[0x70001 + 2 * i]);
++}
++
++// The counts below are what that rule gives for this start (program at the first cycle of sample
++// 0), so they pin the rule rather than our own output.
++TEST(timer_a_ticks_on_global_sample_boundaries_like_beetle) {
++    struct { uint8_t tima, ctl; int n; uint16_t want[8]; } cases[] = {
++        {0xFF, 0, 8, {4, 4, 3, 3, 4, 3, 3, 4}},
++        {0xFE, 0, 8, {9, 8, 8, 8, 8, 8, 9, 8}},
++        {0xF0, 0, 8, {75, 75, 74, 75, 74, 75, 74, 75}},
++        {0xFF, 1, 8, {4, 8, 9, 8, 8, 8, 8, 8}},
++        {0x80, 1, 2, {1209, 1212}},
++        {0xF0, 2, 8, {289, 302, 302, 302, 302, 302, 302, 302}},
++    };
++    for (auto& c : cases) {
++        uint16_t got[8];
++        timer_a_polls(c.tima, c.ctl, got, c.n);
++        for (int i = 0; i < c.n; ++i) CHECK_EQ(got[i], c.want[i]);
++    }
++}
++
++// An SH-2 access to sound RAM between two polls first brings the 68000 up to the master's time
++// (sat_now_cpu: the poll's time plus what the master has spent since), to the cycle.
++TEST(an_sh2_sound_access_runs_the_68000_up_to_the_masters_time) {
++    sound_replay_cpu(false);
++    sound_power(false);
++    std::memset(g_sound_ram, 0, sizeof g_sound_ram);
++    const uint8_t vec[] = {0x00, 0x07, 0xF0, 0x00, 0x00, 0x07, 0xE0, 0x00};   // SSP, PC
++    std::memcpy(g_sound_ram, vec, sizeof vec);
++    const uint8_t loop[] = {0x52, 0x87, 0x60, 0xFC};                          // addq.l #1,d7; bra.s
++    std::memcpy(g_sound_ram + 0x7E000, loop, sizeof loop);
++    SH2Context* const was = g_cpu;
++    g_cpu = &g_master;
++    const int32_t budget = g_master.budget;
++    g_master.budget = 0;                          // its slice spent
++    sound_power(true);
++    m68k_set_reg(M68K_REG_D7, 0);
++    sound_read(0x05A00000u, 2);
++    const uint64_t t0 = sat_now_cpu();
++    const uint32_t d0 = m68k_get_reg(nullptr, M68K_REG_D7);
++    // 1 ms more of cycles (overspent) at the SH-2's clock (φ: 26.87 MHz after a reset)
++    g_master.budget -= 4 * (int32_t)(1000000000ull / onchip_ps_per_cycle());
++    CHECK_EQ(sat_now_cpu() - t0 >= 999950 && sat_now_cpu() - t0 <= 1000010, true);
++    sound_read(0x05A00000u, 2);
++    const uint32_t d1 = m68k_get_reg(nullptr, M68K_REG_D7);
++    // 1 ms of the 68000 (11 289.6 cycles) is 470 loops of 24 cycles
++    CHECK_EQ(d1 - d0 >= 469 && d1 - d0 <= 471, true);
++    g_master.budget = budget;
++    g_cpu = was;
++    sound_power(false);
++}
++
++// The LFO steps its 8-bit position once every kLfoPeriod[LFOF] samples (1 at LFOF 31, 1020 at 0);
++// LFORE holds it at 0.
++TEST(the_lfo_steps_every_period_samples_and_lfore_holds_it) {
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0 * 0x20 + 0x12, 31 << 10, 2);
++    scsp_write(1 * 0x20 + 0x12, 0 << 10, 2);
++    scsp_write(2 * 0x20 + 0x12, 0x8000 | 31 << 10, 2);
++    for (int i = 0; i < 5; i++) scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 0), 5u);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 1), 1u);             // its first step, then 1020 to go
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_TIME, 1), 1020u - 4);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 2), 0u);
++}
++
++// An attack rate of 64 or more (AR 31 with key-rate scaling) attacks at once: level 0 at key-on.
++TEST(an_attack_rate_past_62_attacks_at_once) {
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0x08, 31, 2);                                         // AR 31
++    scsp_write(0x0A, 1 << 10, 2);                                    // KRS 1: rate 64
++    scsp_write(0x00, 0x1800, 2);                                     // KYONB, KYONEX
++    scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0), 0u);
++    scsp_reset();
++    scsp_write(0x08, 31, 2);                                         // KRS 0: rate 62, from 0x280
++    scsp_write(0x00, 0x1800, 2);
++    scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0) > 0u, true);
++}
++
++// Decay 1 ends on reaching DL even when D1R is 0 and nothing moved; an instant attack checks DL on
++// its own step, a stepped one on the next.
++TEST(decay_1_ends_at_dl_whatever_its_rate) {
++    for (int dl = 0; dl <= 1; dl++) {
++        scsp_reset();
++        int16_t out[2];
++        scsp_write(0x0A, dl << 5, 2);                                // D1R 0, DL
++        scsp_set_internal(SCSP_PLAYING, 0, 1); scsp_set_internal(SCSP_ENV, 0, 0);
++        scsp_set_internal(SCSP_ENV_PHASE, 0, 1);                     // decay 1
++        scsp_sample(0, 0, out); scsp_sample(0, 0, out);
++        CHECK_EQ(scsp_get_internal(SCSP_ENV_PHASE, 0), dl ? 1u : 2u);
++    }
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0x08, 31, 2); scsp_write(0x0A, 1 << 10, 2);           // AR 31, KRS 1: instant, DL 0
++    scsp_write(0x00, 0x1800, 2);
++    for (int i = 0; i < 4; i++) scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV_PHASE, 0), 2u);
++}
++
++// Unused slot register bits are not kept (black box): word 0 keeps bits 11-0, word 6 11-0, word 10 7-0.
++TEST(unused_slot_register_bits_read_back_as_0) {
++    scsp_reset();
++    scsp_write(0x00, 0xE7FF, 2); scsp_write(0x0C, 0xFFFF, 2); scsp_write(0x14, 0xFFFF, 2);
++    CHECK_EQ(scsp_read(0x00, 2), 0x07FFu);
++    CHECK_EQ(scsp_read(0x0C, 2), 0x0FFFu);
++    CHECK_EQ(scsp_read(0x14, 2), 0x00FFu);
++}
++
++// Backwards in a reverse loop, a step that ends past the wave's start (more than LSA samples past
++// LEA in the mirrored count) is not turned: the slot reads on below the wave until a key-on.
++TEST(a_reverse_step_past_the_waves_start_is_not_turned) {
++    for (int from = 8; from <= 9; from++) {
++        scsp_reset();
++        int16_t out[2];
++        scsp_write(0x00, 2 << 5, 2);                                 // LPCTL 2 (reverse)
++        scsp_write(0x04, 0, 2); scsp_write(0x06, 10, 2);             // LSA 0, LEA 10
++        scsp_write(0x10, 1 << 11, 2);                                // OCT 1: 2 samples a step
++        scsp_set_internal(SCSP_PLAYING, 0, 1); scsp_set_internal(SCSP_IN_LOOP, 0, 1);
++        scsp_set_internal(SCSP_REVERSE, 0, 1); scsp_set_internal(SCSP_ADDR, 0, from);
++        scsp_sample(0, 0, out);
++        CHECK_EQ(scsp_get_internal(SCSP_LOST, 0), from == 9 ? 1u : 0u);
++        CHECK_EQ(scsp_get_internal(SCSP_ADDR, 0), from == 9 ? 11u : 0u);
++    }
++}
++
++// MADRS is 32 words at 0x780-0x7BF; 0x7C0-0x7FF holds no register. A sound driver that clears the
++// whole 0x700-0x7FF block after setting MADRS (Shining Force III's) must keep its delay taps.
++TEST(writes_past_madrs_leave_the_delay_addresses_alone) {
++    scsp_reset();
++    scsp_write(0x782, 0x1234, 2);
++    scsp_write(0x7C2, 0x0000, 2);
++    scsp_write(0x7FE, 0xFFFF, 2);
++    CHECK_EQ(scsp_read(0x782, 2), 0x1234u);
++    CHECK_EQ(scsp_read(0x7BE, 2), 0u);
++    CHECK_EQ(scsp_read(0x7C2, 2), 0u);
++}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
@@ -3396,10 +5204,69 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..78f3e88 100644
+index 4cf69d5..85c9dbf 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
-@@ -268,17 +268,32 @@ class Body:
+@@ -16,8 +16,11 @@ into a C++ function:
+   know goes to sh2_call, as a tail. Calls through registers compare with the
+   target analysis expects and otherwise dispatch: a wrong guess costs a
+   lookup, never a wrong call;
+-* safe points (SH2_POLL) at loop back-edges, before calls and after
+-  `ldc ...,sr`.
++* safe points (SH2_SAFE) at loop back-edges, before calls and after
++  `ldc ...,sr`;
++* time: each block (a label or a branch to the next) charges its SH-2 issue
++  cycles and memory accesses as it is entered (SH2_CYC), a taken
++  conditional branch its extra cycles; safe points only check the budget.
+ 
+ Every multi-statement instruction is its own block, so a `goto` never
+ crosses an initialisation.
+@@ -237,7 +240,7 @@ def stmt(ins, literal=None):
+         else:
+             head, v = "", R(m)
+         if reg == "sr":
+-            body = "sh2_set_sr(c, %s & 0x3F3u); SH2_POLL(c);" % v
++            body = "sh2_set_sr(c, %s & 0x3F3u); SH2_SAFE(c);" % v
+         else:
+             body = "c.%s = %s;" % (reg, v)
+         return "{ %s%s }" % (head, body) if head else body
+@@ -255,6 +258,35 @@ def stmt(ins, literal=None):
+ 
+ BRANCHES = {"bt", "bf", "bt/s", "bf/s", "bra", "bsr", "jmp", "jsr", "braf", "bsrf", "rts", "rte"}
+ 
++# Issue cycles per instruction, from the SH-1/SH-2 Programming Manual's
++# instruction tables (execution states, no contention): 1 unless listed. A
++# conditional branch is listed not taken; the taken path adds _TAKEN. The
++# multiply-unit ones are their issue cost (the manual's lower bound).
++_CYCLES = {"bra": 2, "bsr": 2, "braf": 2, "bsrf": 2, "jmp": 2, "jsr": 2, "rts": 2, "rte": 4,
++           "trapa": 8, "sleep": 3, "and.b": 3, "or.b": 3, "xor.b": 3, "tst.b": 3, "tas.b": 4,
++           "mul.l": 2, "dmuls.l": 2, "dmulu.l": 2, "mac.l": 3, "mac.w": 3, "stc.l": 2}
++_TAKEN = {"bt": 2, "bf": 2, "bt/s": 1, "bf/s": 1}
++
++
++def cycles(ins):
++    """(issue cycles, memory accesses) of one instruction, its delay slot not included."""
++    op = ins.op
++    n = _CYCLES.get(op, 1)
++    if op == "ldc.l":
++        n = 3
++    t = ins.text
++    mem = 0
++    if op in ("mov.b", "mov.w", "mov.l", "and.b", "or.b", "xor.b", "tst.b", "tas.b", "ldc.l", "lds.l", "stc.l", "sts.l"):
++        mem = 1
++    elif op in ("mac.l", "mac.w"):
++        mem = 2
++    elif op == "rte":
++        mem = 2
++    elif op == "trapa":
++        mem = 3
++    return n, mem
++
++
+ 
+ class Body:
+     """One discovered function as C++.
+@@ -268,17 +300,32 @@ class Body:
      its own ("insn") as well when something jumps to it.
      """
  
@@ -3433,7 +5300,14 @@ index 4cf69d5..78f3e88 100644
  
      # -- analysis
      def _resolve(self):
-@@ -334,9 +349,14 @@ class Body:
+@@ -328,15 +375,20 @@ class Body:
+         if t not in self.f.code:
+             return "{ %s }" % self._tail(t)
+         if t <= src:
+-            return "SH2_POLL(c); goto L_%08X;" % t
++            return "SH2_SAFE(c); goto L_%08X;" % t
+         return "goto L_%08X;" % t
+ 
      def _tail(self, t):
          """Leave for `t`, a static target outside this function's code."""
          if t in self.entries:
@@ -3444,13 +5318,13 @@ index 4cf69d5..78f3e88 100644
 +        return "sh2_call(c, %s); %s" % (_h(t), self._returned())
 +
 +    def _returned(self):
-+        cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++        cases = " ".join("case %s: SH2_SAFE(c); goto L_%08X;" % (_h(t), t)
 +                         for t in sorted(self._local_returns))
 +        return ("switch (c.pc) { %s default: return; }" % cases) if cases else "return;"
  
      def _call(self, t):
          if t in self.entries:
-@@ -371,16 +391,16 @@ class Body:
+@@ -371,16 +423,16 @@ class Body:
                  cases.append("case %s: goto L_%08X;" % (_h(v), v))
                  back |= v <= a
              elif v in self.entries:
@@ -3458,7 +5332,8 @@ index 4cf69d5..78f3e88 100644
 +                cases.append("case %s: %s" % (_h(v), self._tail(v)))
              else:
                  self.unknown.append(v)
-         poll = "SH2_POLL(c); " if back else ""
+-        poll = "SH2_POLL(c); " if back else ""
++        poll = "SH2_SAFE(c); " if back else ""
          if not cases:
 -            return "sh2_call(c, x); return;"
 -        return "%sswitch (x) { %s default: sh2_call(c, x); return; }" % (poll, " ".join(cases))
@@ -3471,32 +5346,53 @@ index 4cf69d5..78f3e88 100644
          code = self.f.code
          self._fallback = sorted(a for a in code if a not in self.slots)
          for a, ins in self.ops.items():
-@@ -418,13 +438,23 @@ class Body:
-             return "c.pr = %s; %sSH2_POLL(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
+@@ -402,7 +454,7 @@ class Body:
+         if op not in BRANCHES:
+             return self._stmt(ins), a + 2
+         if op in ("bt", "bf"):
+-            return "if (%sc.t) { %s }" % ("" if op == "bt" else "!", self._goto(ins.target, a)), a + 2
++            return "if (%sc.t) { SH2_CYC(c, %d, 0); %s }" % ("" if op == "bt" else "!", _TAKEN[op], self._goto(ins.target, a)), a + 2
+         slot = self._stmt(self.img.insn(a + 2))
+         if slot == ";":
+             slot = ""
+@@ -410,21 +462,31 @@ class Body:
+         ret = _h(a + 4)
+         check = "if (c.pc != %s) return;" % ret if self.unwind_returns else "SH2_RET(c, %s);" % ret
+         if op in ("bt/s", "bf/s"):
+-            return ("{ const bool k = %sc.t; %sif (k) { %s } }"
+-                    % ("" if op == "bt/s" else "!", s, self._goto(ins.target, a)), a + 4)
++            return ("{ const bool k = %sc.t; %sif (k) { SH2_CYC(c, %d, 0); %s } }"
++                    % ("" if op == "bt/s" else "!", s, _TAKEN[op], self._goto(ins.target, a)), a + 4)
+         if op == "bra":
+             return s + self._goto(ins.target, a), None
+         if op == "bsr":
+-            return "c.pr = %s; %sSH2_POLL(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
++            return "c.pr = %s; %sSH2_SAFE(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
          if op in ("jsr", "bsrf"):
              x = _r(ins.n) if op == "jsr" else "%s + %s" % (ret, _r(ins.n))
+-            return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_POLL(c); %s %s }"
 +            if a in self.stack_return_calls:
 +                # A verified wrapper saved its caller's PR immediately before
 +                # this call. Accept only an exact one-word stack pop returning
 +                # to that saved address; all other mismatches stay fatal.
 +                check = ("if (c.pc != %s && c.r[15] == saved_sp + 4u && c.pc == saved_return) return; SH2_RET(c, %s);" % (ret, ret))
-+                return ("{ const uint32_t x = %s; const uint32_t saved_sp = c.r[15], saved_return = ld32(saved_sp); c.pr = %s; %sSH2_POLL(c); %s %s }"
++                return ("{ const uint32_t x = %s; const uint32_t saved_sp = c.r[15], saved_return = ld32(saved_sp); c.pr = %s; %sSH2_SAFE(c); %s %s }"
 +                        % (x, ret, s, self._dcall(a), check), a + 4)
-             return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_POLL(c); %s %s }"
++            return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_SAFE(c); %s %s }"
                      % (x, ret, s, self._dcall(a), check), a + 4)
          if op in ("jmp", "braf"):
              x = _r(ins.n) if op == "jmp" else "%s + %s" % (ret, _r(ins.n))
              return "{ const uint32_t x = %s; %s%s }" % (x, s, self._djump(a)), None
          if op == "rts":
 -            return "{ const uint32_t x = c.pr; %sc.pc = x; return; }" % s, None
-+            cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++            cases = " ".join("case %s: SH2_SAFE(c); goto L_%08X;" % (_h(t), t)
 +                             for t in sorted(self._local_returns))
 +            local = ("switch (x) { %s default: break; } " % cases) if cases else ""
 +            return "{ const uint32_t x = c.pr; %s%sc.pc = x; return; }" % (s, local), None
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -436,6 +466,11 @@ class Body:
+@@ -436,13 +498,37 @@ class Body:
          code = self.f.code
          order = sorted(a for a in code if a not in self.slots or a in labels or a == self.f.entry)
          lines = ["void %s(SH2Context& c) {" % fname(self.f.entry)]
@@ -3508,16 +5404,45 @@ index 4cf69d5..78f3e88 100644
          if order and order[0] != self.f.entry:            # code shared from below the entry
              labels.add(self.f.entry)
              lines.append("    goto L_%08X;" % self.f.entry)
-@@ -453,6 +488,8 @@ class Body:
+         late = set()
++        lead = True
+         for i, a in enumerate(order):
+             if a in labels or a in late:
+                 lines.append("L_%08X:" % a)
++                lead = True
++            if lead:
++                # A block: this instruction up to the next label or branch,
++                # charged as it is entered.
++                cyc = mem = 0
++                for b in order[i:]:
++                    if b != a and (b in labels or b in late):
++                        break
++                    insb = self.ops[b]
++                    n, m = cycles(insb)
++                    cyc, mem = cyc + n, mem + m
++                    if insb.delay and b + 2 in code:
++                        n, m = cycles(self.img.insn(b + 2))
++                        cyc, mem = cyc + n, mem + m
++                    if insb.op in BRANCHES:
++                        break
++                lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
++                lead = False
+             text, succ = self._insn(a)
+             ins = self.ops[a]
+             if self.comments:
+@@ -453,7 +539,11 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
 +            if self.resume_points and a in self.state_points:
 +                lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
              lines.append("    " + text)
++            if self.ops[a].op in BRANCHES:
++                lead = True
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
-@@ -462,4 +499,7 @@ class Body:
+                 if succ in code:
+@@ -462,4 +552,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")
