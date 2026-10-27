@@ -60,7 +60,7 @@ index 566fcfd..d5bb5fc 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..08eaa4b 100644
+index cb6af72..dc484d8 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,9 @@
@@ -73,7 +73,54 @@ index cb6af72..08eaa4b 100644
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -113,42 +115,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -13,19 +15,23 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+ // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
+ // external bus), 2 associative purge (writes drop a cache line: nothing to
+ // do), 3 the cache's address array, 6 its data array, 7 the on-chip
+-// registers. WRAM-H repeats every MiB up to 0x07FFFFFF.
++// registers. WRAM-H repeats every MiB up to 0x07FFFFFF; WRAM-L at
++// 0x00200000 repeats once, at 0x00300000 (the fast paths take only the first).
+ 
+-static uint32_t wram_h_read(uint32_t o, int size) {
++static uint32_t wram_read(const uint8_t* m, uint32_t o, int size) {
+     uint32_t v = 0;
+-    for (int i = 0; i < size; ++i) v = v << 8 | g_wram_h[(o + i) & 0xFFFFFu];
++    for (int i = 0; i < size; ++i) v = v << 8 | m[(o + i) & 0xFFFFFu];
+     return v;
+ }
++static uint32_t wram_h_read(uint32_t o, int size) { return wram_read(g_wram_h, o, size); }
++static bool wram_l_mirror(uint32_t p) { return p >= 0x00300000u && p < 0x00400000u; }
+ 
+ uint32_t sh2_io_read(uint32_t a, int size) {
+     uint32_t area = a >> 29;
+     if (area <= 1) {
+         uint32_t p = a & 0x07FFFFFFu;
+         if (p >= 0x06000000u) return wram_h_read(p, size);
++        if (wram_l_mirror(p)) return wram_read(g_wram_l, p, size);
+         return sh2_mmio_read(p, size);
+     }
+     if (area == 2) return 0;
+@@ -40,6 +46,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+             for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
+             return;
+         }
++        if (wram_l_mirror(p)) {
++            for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_l[(p + i) & 0xFFFFFu] = (uint8_t)v;
++            return;
++        }
+         sh2_mmio_write(p, v, size);
+         return;
+     }
+@@ -50,7 +60,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+ static uint8_t* host(uint32_t a) {
+     a &= 0x1FFFFFFFu;
+     if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
+-    if (a >= 0x00200000u && a < 0x00300000u) return g_wram_l + (a & 0xFFFFFu);
++    if (a >= 0x00200000u && a < 0x00400000u) return g_wram_l + (a & 0xFFFFFu);
+     return nullptr;
+ }
+ 
+@@ -113,42 +123,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -146,7 +193,7 @@ index cb6af72..08eaa4b 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +204,31 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +212,31 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
@@ -1643,6 +1690,55 @@ index a17d926..2055f4c 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
+diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
+index b9dd332..a73895f 100644
+--- a/runtime/src/machine/mmio.cpp
++++ b/runtime/src/machine/mmio.cpp
+@@ -102,12 +102,13 @@ void mmio_log_write(const std::string& path) {
+ }
+ 
+ // ---- memory with no device behind it (yet) ------------------------------------------------------
+-static uint8_t g_backup[0x10000];       // backup RAM, odd bytes
++static uint8_t g_backup[0x10000];       // backup RAM, odd bytes; repeats every 64 KiB up to 0x001FFFFF
++static bool backup_area(uint32_t a) { return a >= 0x00180000u && a < 0x00200000u; }
+ static uint8_t g_cache[2][0x1000];      // each CPU's cache as RAM (0xC0000000)
+ 
+ static const char* area_of(uint32_t a) {
+     if (a < 0x00080000u) return "BIOS ROM";
+-    if (a >= 0x00180000u && a < 0x00190000u) return "backup RAM";
++    if (backup_area(a)) return "backup RAM";
+     if (a >= 0x02000000u && a < 0x05000000u) return "A-bus cartridge";
+     if (a >= 0x05A00000u && a < 0x05B00000u) return "SCSP RAM";
+     if (a >= 0x05C00000u && a < 0x05C80000u) return "VDP1 VRAM";
+@@ -135,7 +136,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+     if (area != 0) { log_area("cache address array", a, 'R'); return 0; }
+     if (const char* n = area_of(a)) {
+         log_area(n, a, 'R');
+-        if (a >= 0x00180000u && a < 0x00190000u) return mem_rd(g_backup, a & 0xFFFF, size);
++        if (backup_area(a)) return mem_rd(g_backup, a & 0xFFFF, size);
+         if (video_owns(a)) return video_read(a, size);
+         if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
+         return bios_rom_read(a, size);          // the BIOS ROM is not here
+@@ -154,6 +155,10 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+     if (a >= 0x05800000u && a < 0x05900000u) return cd_read(a & 0xFFFFF, size);
+     if (a >= 0x05FE0000u && a < 0x05FE0100u) return scu_read(a & 0xFF, size);
+     if (video_owns(a)) return video_read(a, size);
++    if (a >= 0x01000000u && a < 0x02000000u) {  // SINIT/MINIT take writes only; a read finds the bus floating high
++        log_area("SINIT/MINIT read", a, 'R');
++        return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
++    }
+     sat_fatal("%d-byte read of %08X: nothing there", size, a);
+ }
+ 
+@@ -164,7 +169,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
+     if (area != 0) { log_area(area == 2 ? "cache purge" : "cache address array", a, 'W'); return; }
+     if (const char* n = area_of(a)) {
+         log_area(n, a, 'W');
+-        if (a >= 0x00180000u && a < 0x00190000u) { mem_wr(g_backup, a & 0xFFFF, v, size); return; }
++        if (backup_area(a)) { mem_wr(g_backup, a & 0xFFFF, v, size); return; }
+         if (video_owns(a)) { video_write(a, v, size); return; }
+         return;                                 // ROM, no cartridge
+     }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
 index 33a2cdd..6b783ff 100644
 --- a/runtime/src/machine/onchip.cpp
@@ -3233,6 +3329,17 @@ index ebaa466..c68e655 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
+index 39eb423..f71d861 100644
+--- a/runtime/tests/CMakeLists.txt
++++ b/runtime/tests/CMakeLists.txt
+@@ -8,5 +8,5 @@ if(NOT CMAKE_BUILD_TYPE)
+   set(CMAKE_BUILD_TYPE Release)
+ endif()
+ include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
+-add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp memmap_test.cpp)
+ target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3266,6 +3373,37 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/memmap_test.cpp b/runtime/tests/memmap_test.cpp
+new file mode 100644
+index 0000000..6b71f96
+--- /dev/null
++++ b/runtime/tests/memmap_test.cpp
+@@ -0,0 +1,25 @@
++// The address map outside the work RAMs.
++#include "saturn.h"
++#include "test.h"
++
++// Backup RAM (64 KiB window at 0x00180000) repeats through 0x001FFFFF: Shining Force III
++// Scenario 3 reads a table at a negative index from 0x00200030 and lands at 0x001FFEAA.
++TEST(backup_ram_repeats_every_64k_up_to_the_low_work_ram) {
++    uint32_t keep = sh2_mmio_read(0x0018FEAB, 1);
++    sh2_mmio_write(0x0018FEAB, 0x5A, 1);
++    CHECK_EQ(sh2_io_read(0x001FFEAB, 1), 0x5Au);
++    CHECK_EQ(sh2_io_read(0x0019FEAB, 1), 0x5Au);
++    CHECK_EQ(sh2_io_read(0x201FFEAB, 1), 0x5Au);   // cache-through
++    sh2_io_write(0x001FFEAB, 0xA5, 1);
++    CHECK_EQ(sh2_mmio_read(0x0018FEAB, 1), 0xA5u);
++    sh2_mmio_write(0x0018FEAB, keep, 1);
++}
++
++// SINIT/MINIT (0x01000000-0x01FFFFFF) take writes only. Shining Force III Scenario 2 V2.000 reads a
++// battle table at index -1 and follows the word before it, 0x012C0002, as a pointer: a read there
++// must not stop the machine.
++TEST(sinit_minit_reads_float_high) {
++    CHECK_EQ(sh2_mmio_read(0x012C0002, 1), 0xFFu);
++    CHECK_EQ(sh2_mmio_read(0x012C0002, 2), 0xFFFFu);
++    CHECK_EQ(sh2_mmio_read(0x01800000, 4), 0xFFFFFFFFu);
++}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
