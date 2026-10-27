@@ -2490,7 +2490,7 @@ index 15c677f..55ec3b7 100644
          Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
          int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..e382fc0 100644
+index 4c8bcb1..c5f555d 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2505,15 +2505,21 @@ index 4c8bcb1..e382fc0 100644
  // NBG3); special priority and special colour calculation by screen or by
  // character, and colour calculation by the colour's MSB; colour calculation
  // of the top two layers (the top one's ratio or the second's, or add), with
-@@ -21,16 +22,20 @@
+@@ -20,17 +21,23 @@
+ // dots), with double-density interlace composed as one picture of both
  // fields' lines (448, 480 or 512), the scroll screens a dot row a line;
  // shadows (normal, MSB and transparent) on the scroll screens, the back
- // screen and the sprite itself.
+-// screen and the sprite itself.
 -// What is not: RBG0 and RBG1 (rotation), line and vertical-cell scroll,
-+// What is not: RBG1, window-selected rotation parameters, line and vertical-cell scroll,
++// screen and the sprite itself; NBG0/NBG1 line scroll (horizontal, vertical
++// and horizontal zoom, a table entry for every 1, 2, 4 or 8 lines); extended
++// colour calculation.
++// What is not: RBG1, window-selected rotation parameters, vertical-cell scroll,
  // mosaic, the sprite window, special priority and colour calculation by dot
- // (the special function codes), gradation of RBG0, extended colour
- // calculation, the exclusive resolutions. A register that asks for one of them is noted once.
+-// (the special function codes), gradation of RBG0, extended colour
+-// calculation, the exclusive resolutions. A register that asks for one of them is noted once.
++// (the special function codes), gradation of RBG0, line colour from rotation coefficients,
++// the exclusive resolutions. A register that asks for one of them is noted once.
  #include "saturn.h"
  #include "state.h"
  #include "video.h"
@@ -2527,7 +2533,7 @@ index 4c8bcb1..e382fc0 100644
  
  uint8_t g_vdp2_vram[0x80000], g_vdp2_cram[0x1000], g_vdp2_regs[0x200];
  
-@@ -43,8 +48,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
+@@ -43,8 +50,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
      return (int32_t)((value & (sign * 2 - 1)) ^ sign) - (int32_t)sign;
  }
  
@@ -2542,8 +2548,11 @@ index 4c8bcb1..e382fc0 100644
      uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
      auto parameter = [&](uint32_t off, int bits, int shift) {
          return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
-@@ -100,7 +109,7 @@ struct Pix {
+@@ -98,9 +109,10 @@ struct Pix {
+     bool spr, scc;                              // the character's special priority and colour calculation bits
+     bool msb;                                   // the colour data's MSB
      bool shade;                                 // an MSB shadow: the sprite dot at half brightness
++    bool direct;                                // an RGB dot (not from colour RAM): the back screen, RGB data
  };
  
 -enum { L_SPRITE, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
@@ -2551,7 +2560,87 @@ index 4c8bcb1..e382fc0 100644
  
  // ---- the scroll screens ---------------------------------------------------------------------
  struct Nbg {
-@@ -267,6 +276,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+@@ -118,8 +130,38 @@ struct Nbg {
+     int32_t sx, sy, dx, dy;                     // scroll and increments, 8 fraction bits
+     uint8_t prio, ratio;
+     bool cc, offset, offset_b;
++    // NBG0/NBG1 line scroll (SCRCTL): per display line, the horizontal scroll added to sx, the
++    // vertical coordinate (scroll plus the table's, in place of the line count) and the x increment
++    bool line_x = false, line_y = false, line_zoom = false;
++    std::vector<std::array<int32_t, 3>> lines;
+ };
+ 
++static uint32_t vl(uint32_t a);
++
++// SCRCTL line scroll for NBG0/NBG1: the table at LSTAn holds, for each group of 1/2/4/8 lines, a
++// long for each of horizontal scroll, vertical scroll and horizontal zoom that SCRCTL turns on, in
++// that order: scroll as 11 integer and 8 fraction bits (26-8), zoom as 3 and 8 (18-8).
++static void setup_line_scroll(int n, Nbg& s) {
++    uint16_t ctl = (uint16_t)(reg(0x9A) >> (n * 8));
++    s.line_x = ctl >> 1 & 1;
++    s.line_y = ctl >> 2 & 1;
++    s.line_zoom = ctl >> 3 & 1;
++    if (!s.line_x && !s.line_y && !s.line_zoom) return;
++    int interval = 1 << (ctl >> 4 & 3);
++    int entries = s.line_x + s.line_y + s.line_zoom;
++    uint32_t table = ((uint32_t)(reg(0xA0 + n * 4) & 7) << 16 | (reg(0xA2 + n * 4) & 0xFFFE)) << 1;
++    int height = vdp2_lines() * 2;               // room for either field in double density
++    s.lines.resize((size_t)height);
++    for (int y = 0; y < height; ++y) {
++        uint32_t at = table + (uint32_t)((y / interval) * entries) * 4;
++        auto& l = s.lines[(size_t)y];
++        l = {0, 0, s.dx};
++        if (s.line_x) { l[0] = (int32_t)(vl(at) >> 8 & 0x7FFFF); at += 4; }
++        if (s.line_y) { l[1] = (int32_t)(vl(at) >> 8 & 0x7FFFF); at += 4; }
++        if (s.line_zoom) { l[2] = (int32_t)(vl(at) >> 8 & 0x7FF); }
++    }
++}
++
+ static void setup_nbg(int n, Nbg& s) {
+     s = Nbg{};
+     uint16_t bgon = reg(0x20);
+@@ -171,6 +213,7 @@ static void setup_nbg(int n, Nbg& s) {
+         s.sy = (int32_t)((reg(b + 4) & 0x7FF) << 8 | reg(b + 6) >> 8);
+         s.dx = (int32_t)((reg(b + 8) & 7) << 8 | reg(b + 10) >> 8);
+         s.dy = (int32_t)((reg(b + 12) & 7) << 8 | reg(b + 14) >> 8);
++        setup_line_scroll(n, s);
+     } else {
+         uint32_t b = 0x90 + (n - 2) * 4;
+         s.sx = (int32_t)(reg(b) & 0x7FF) << 8;
+@@ -199,6 +242,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         if (!(w & 0x8000) && !s.opaque) return false;
+         p.rgb = rgb555(w);
+         p.msb = w >> 15;
++        p.direct = true;
+         return true;
+     }
+     default: {
+@@ -206,6 +250,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         if (!(w & 0x80000000u) && !s.opaque) return false;
+         p.rgb = (w & 0xFF) << 16 | (w & 0xFF00) | (w >> 16 & 0xFF);
+         p.msb = w >> 31;
++        p.direct = true;
+         return true;
+     }
+     }
+@@ -216,7 +261,15 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+ }
+ 
+ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+-    uint32_t sx = (uint32_t)(s.sx + x * s.dx) >> 8, sy = (uint32_t)(s.sy + y * s.dy) >> 8;
++    uint32_t sx, sy;
++    if (!s.lines.empty() && y >= 0 && (size_t)y < s.lines.size()) {
++        const auto& l = s.lines[(size_t)y];
++        sx = (uint32_t)(s.sx + l[0] + x * l[2]) >> 8;
++        sy = (uint32_t)(s.line_y ? s.sy + l[1] : s.sy + y * s.dy) >> 8;
++    } else {
++        sx = (uint32_t)(s.sx + x * s.dx) >> 8;
++        sy = (uint32_t)(s.sy + y * s.dy) >> 8;
++    }
+     if (s.bitmap) {
+         sx &= (uint32_t)s.bm_w - 1;
+         sy &= (uint32_t)s.bm_h - 1;
+@@ -267,6 +320,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
      return dot(s, base, px & 7, py & 7, 8, pal, p);
  }
  
@@ -2790,16 +2879,43 @@ index 4c8bcb1..e382fc0 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +608,7 @@ static void note_unsupported() {
+@@ -292,6 +577,7 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+     SpriteDot kind = S_DOT;
+     if (mixed && (d & 0x8000)) {
+         p.rgb = rgb555(d);
++        p.direct = true;
+         p.prio = prio_of(0);
+         p.ratio = ratio_of(0);
+         msb = true;
+@@ -367,21 +653,23 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
 -    once(0, reg(0x20) & 0x30, "RBG0/RBG1", reg(0x20));
+-    once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
 +    once(0, (reg(0x20) & 0x20) || ((reg(0x20) & 0x10) && (reg(0xB0) & 3) == 3), "RBG1 or rotation parameters chosen by window", reg(0x20));
-     once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
++    once(1, reg(0x9A) & 0x0101, "vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +634,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+-    once(4, (reg(0xEC) & 0x8400) == 0x0400 && reg(0xEC) & 0x5F, "extended colour calculation (CCCTL)", reg(0xEC));
+     once(8, reg(0xEC) & 0x8000 && (reg(0xEC) >> 12 & 7) == 1, "gradation of RBG0 (CCCTL)", reg(0xEC));
+     once(5, (reg(0x00) & 7) >= 4, "an exclusive resolution (TVMD)", reg(0x00));
+     auto mode = [](uint16_t r, int m) {
+         for (int n = 0; n < 4; ++n) if ((r >> (n * 2) & 3) == m) return true;
+         return false;
+     };
+-    once(6, reg(0xE8) & 0x10, "the line colour screen under RBG0 (LNCLEN)", reg(0xE8));
++    // RBG0's line colour insertion itself is done; a coefficient table's per-dot line colour (KTCTL LCCE) is not
++    once(6, reg(0xE8) & 0x10 && reg(0xB4) & 0x1111 & ((reg(0xB4) & 0x1010) >> 4), "line colour from rotation coefficients (KTCTL LCCE)", reg(0xB4));
+     once(7, mode(reg(0xEA), 2) || mode(reg(0xEE), 2), "special priority or colour calculation by dot (SFPRMD, SFCCMD)", reg(0xEA));
+ }
+ 
++static uint32_t avg_rgb(uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; }
++
+ static uint32_t apply_offset(uint32_t rgb, bool b) {
+     uint32_t base = b ? 0x11A : 0x114;
+     int out = 0;
+@@ -393,23 +681,60 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -2839,7 +2955,30 @@ index 4c8bcb1..e382fc0 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +680,7 @@ void vdp2_compose(Frame& f) {
+     bool second_ratio = reg(0xEC) >> 9 & 1;      // CCRTMD: the ratio is the second image's
++    // EXCCEN (normal resolution): where the second image's screen has colour calculation enabled in
++    // CCCTL, it is first averaged with the third image. With line colour insertion, the line colour is
++    // averaged with the image under the top (in colour RAM mode 0 halved when that screen's colour
++    // calculation is enabled; in modes 1 and 2 averaged with the image under it instead). In colour
++    // RAM modes 1 and 2 an image is only averaged in when its dot is RGB rather than colour RAM.
++    const bool excc = (reg(0xEC) & 0x8400) == 0x0400 && !(hreso & 6);
++    const bool cram0 = cram_mode() == 0;
++    auto layer_cce = [](int i) { return (reg(0xEC) >> (i == L_SPRITE ? 6 : i == L_RBG0 ? 4 : i - L_NBG0) & 1) != 0; };
++    // u: the second image (or the line colour); s2, s3, s4: the images under the top in order
++    auto extended = [cram0](uint32_t u, bool line, bool s2_cce, const Pix& s2, const Pix& s3, const Pix& s4) {
++        if (line) {
++            if (cram0) return avg_rgb(u, s2_cce ? s2.rgb >> 1 & 0x7F7F7F : s2.rgb);
++            if (!s2.direct) return u;
++            return avg_rgb(u, s2_cce && s4.direct ? avg_rgb(s2.rgb, s4.rgb) : s2.rgb);
++        }
++        return s2_cce && (cram0 || s3.direct) ? avg_rgb(u, s3.rgb) : u;
++    };
+     Pix back{};
++    back.direct = true;
+     back.offset = reg(0x110) >> 5 & 1;
+     back.offset_b = reg(0x112) >> 5 & 1;
+     back.ratio = (uint8_t)(reg(0x10E) >> 8 & 0x1F);
+@@ -420,7 +745,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -2848,7 +2987,7 @@ index 4c8bcb1..e382fc0 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +688,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +753,40 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -2890,7 +3029,7 @@ index 4c8bcb1..e382fc0 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +729,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,35 +794,61 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -2919,11 +3058,16 @@ index 4c8bcb1..e382fc0 100644
 +                if(!parallel)provenance_hash(f,dst);continue;
 +            }
              Pix l[L_COUNT];
-             int top = -1, second = -1;
+-            int top = -1, second = -1;
++            int top = -1, second = -1, third = -1, fourth = -1;
              auto consider = [&](int i) {
-@@ -458,16 +756,32 @@ void vdp2_compose(Frame& f) {
-                 if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
-                 else if (second < 0 || l[i].prio > l[second].prio) second = i;
+                 if (!l[i].prio) return;
+-                if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
+-                else if (second < 0 || l[i].prio > l[second].prio) second = i;
++                if (top < 0 || l[i].prio > l[top].prio) { fourth = third; third = second; second = top; top = i; }
++                else if (second < 0 || l[i].prio > l[second].prio) { fourth = third; third = second; second = i; }
++                else if (third < 0 || l[i].prio > l[third].prio) { fourth = third; third = i; }
++                else if (fourth < 0 || l[i].prio > l[fourth].prio) fourth = i;
              };
 -            // in the order that wins ties: sprite, then NBG0..NBG3
 +            // in the order that wins ties: sprite, RBG0, then NBG0..NBG3
@@ -2957,7 +3101,7 @@ index 4c8bcb1..e382fc0 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +799,12 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +866,18 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -2969,10 +3113,16 @@ index 4c8bcb1..e382fc0 100644
                    : second >= 0 ? l[second] : back;
 -            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[x];
 +            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[output_x];
++            else if (excc && top >= 0) {
++                const Pix& s2 = second >= 0 ? l[second] : back;
++                const Pix& s3 = third >= 0 ? l[third] : back;
++                u.rgb = extended(u.rgb, lnclen >> (top == L_SPRITE ? 5 : top == L_RBG0 ? 4 : top - L_NBG0) & 1,
++                                 second >= 0 && layer_cce(second), s2, s3, fourth >= 0 ? l[fourth] : back);
++            }
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +820,128 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +893,136 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -2997,7 +3147,15 @@ index 4c8bcb1..e382fc0 100644
 +                        for(int i=1;i<L_COUNT;++i) take(i);
 +                        const Pix& first=a>=0 ? l[a] : back;
 +                        const bool line=a>=0 && (lnclen>>(a==L_SPRITE?5:a==L_RBG0?4:a-L_NBG0)&1);
-+                        const Pix& next=line ? line_colour : b>=0 ? l[b] : back;
++                        Pix next=line ? line_colour : b>=0 ? l[b] : back;
++                        if(excc && a>=0) {
++                            int c=-1,d=-1;
++                            for(int i=0;i<L_COUNT;++i) if(i!=a && i!=b && l[i].prio && (i!=L_SPRITE || present)) {
++                                if(c<0 || l[i].prio>l[c].prio) {d=c;c=i;}
++                                else if(d<0 || l[i].prio>l[d].prio) d=i;
++                            }
++                            next.rgb=extended(next.rgb,line,b>=0 && layer_cce(b),b>=0 ? l[b] : back,c>=0 ? l[c] : back,d>=0 ? l[d] : back);
++                        }
 +                        const bool calculation=a>=0 && first.cc && !windowed(cc_wctl,win,x);
 +                        uint32_t value=first.rgb;
 +                        const int ratio=second_ratio ? next.ratio : first.ratio;
