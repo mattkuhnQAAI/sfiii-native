@@ -170,10 +170,11 @@
       "file": "X006.BIN",
       "base": "06043D00",
       "seeds": [
-        "06043D00"
+        "06043D00",
+        "06044550"
       ],
       "overlay": true,
-      "evidence": "Entire 18856-byte image uniquely matches captured RAM at 06043D00 during boot. Loaded mapping verified; entry execution remains to be tested."
+      "evidence": "Entire 18856-byte image uniquely matches captured RAM at 06043D00 during boot. Loaded mapping verified; entry execution remains to be tested. 06044550 is a second entry: Sc3 map 0xA8 (scene X1RYUTA, 060602C0) calls it; Beetle Saturn with a real BIOS has these same X006 bytes at 06044550 and plays the map."
     },
     {
       "name": "X008",
