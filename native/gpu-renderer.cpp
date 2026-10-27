@@ -86,7 +86,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     std::vector<std::vector<uint32_t>> bins(columns*rows);
     data[0]=f.w;data[1]=f.h;data[2]=scale;data[3]=uint32_t(count);data[4]=12;data[5]=quad_at;
     data[6]=bin_at;data[7]=index_at;data[8]=columns;
-    data[9]=f.origin_x;data[10]=tile_size;
+    data[9]=f.origin_x;data[10]=tile_size;data[11]=uint32_t(f.native_w>0?f.native_w:f.w);
     for(uint32_t i=0;i<pixels;++i) {
         const auto at=12+i*10;data[at]=f.px[i];data[at+3]=0x100;
         if(geometry) {
@@ -115,9 +115,23 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
             }
         }
         float xy[8];std::copy(q.xy,q.xy+8,xy);
+        // Dot steps along the character's columns and rows, as VDP1 counts a
+        // line: the longer axis of each edge (manual, distorted sprite drawing).
+        auto steps=[&](int a,int b){return std::max(std::abs(int(xy[2*b])-int(xy[2*a])),std::abs(int(xy[2*b+1])-int(xy[2*a+1])));};
+        data[at+33]=uint32_t(std::max(steps(0,1),steps(3,2)));data[at+34]=uint32_t(std::max(steps(0,3),steps(1,2)));
         if((q.gpu_flags>>16&15)<2) {
             const float dx=xy[2]>=xy[0]?0.5f:-0.5f,dy=xy[7]>=xy[1]?0.5f:-0.5f;
             for(int v=0;v<4;++v){xy[v*2]+=(v==1 || v==2)?dx:-dx;xy[v*2+1]+=(v>=2)?dy:-dy;}
+        } else {
+            // Distorted vertices are dot centres and VDP1 fills the dots its
+            // edges pass through, so the drawn area reaches half a dot beyond
+            // them. Without this, tiles that abut at x and x+1 leave a
+            // one-dot seam of background at every upscale.
+            const float cx=(xy[0]+xy[2]+xy[4]+xy[6])/4,cy=(xy[1]+xy[3]+xy[5]+xy[7])/4;
+            for(int v=0;v<4;++v) {
+                xy[v*2]+=xy[v*2]>cx?0.5f:xy[v*2]<cx?-0.5f:0.f;
+                xy[v*2+1]+=xy[v*2+1]>cy?0.5f:xy[v*2+1]<cy?-0.5f:0.f;
+            }
         }
         std::memcpy(data.data()+at,xy,32);std::memcpy(data.data()+at+8,q.shade,48);
         data[at+20]=q.hflip;data[at+21]=q.vflip;data[at+22]=it->second;data[at+23]=q.texture->w;data[at+24]=q.texture->h;data[at+25]=q.gpu_flags;
@@ -128,7 +142,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         }
         float minx=xy[0],maxx=xy[0],miny=xy[1],maxy=xy[1];
         for(int k=1;k<4;++k){minx=std::min(minx,xy[2*k]);maxx=std::max(maxx,xy[2*k]);miny=std::min(miny,xy[2*k+1]);maxy=std::max(maxy,xy[2*k+1]);}
-        data[at+33]=uint32_t(std::clamp((maxx-minx)*(maxy-miny),1.0f,1000000.0f));
+        data[at+35]=uint32_t(std::clamp((maxx-minx)*(maxy-miny),1.0f,1000000.0f));   // area for ray shadows (33/34 are the dot steps)
         minx+=f.origin_x;maxx+=f.origin_x;
         if(maxx<-.5f || maxy<-.5f || minx>f.w || miny>f.h)continue;
         const int x0=std::clamp(int(std::floor((minx-1)/tile_size)),0,int(columns)-1),x1=std::clamp(int(std::floor((maxx+1)/tile_size)),0,int(columns)-1);

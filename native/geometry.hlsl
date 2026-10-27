@@ -7,7 +7,17 @@ cbuffer Pass:register(b0,space3){uint aa_pass;uint3 pass_padding;};
 uint S(uint at){return scene.Load(at*4);}
 uint T(uint at){return textures.Load(at*4);}
 struct Input {float4 color:TEXCOORD0;float2 uv:TEXCOORD1;float4 position:SV_Position;};
+float3 round_away(float3 v){return sign(v)*floor(abs(v)+.5);}
 float2 vertex_at(uint q,uint at){return asfloat(uint2(S(q+at),S(q+at+1)));}
+bool inverse_bilinear(float2 a,float2 b,float2 c,float2 d,float2 p,out float2 uv) {
+    uv=.5;
+    [unroll]for(int i=0;i<6;++i) {
+        float2 f=a+b*uv.x+d*uv.y+c*uv.x*uv.y-p,du=b+c*uv.y,dv=d+c*uv.x;
+        float determinant=du.x*dv.y-du.y*dv.x;if(abs(determinant)<0.00001)return false;
+        uv-=float2(f.x*dv.y-f.y*dv.x,du.x*f.y-du.y*f.x)/determinant;
+    }
+    return true;
+}
 bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
     color=0;uint flags=S(q+25);if(flags==0xFFFFFFFF)return false;
     if(cell.x<int(S(q+32)) || cell.y<0 || cell.x>int(S(q+26)) || cell.y>int(S(q+27)))return false;
@@ -25,16 +35,26 @@ bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
         float side=v.x*to.y-v.y*to.x;
         if(abs(side)>0.00001) {if(orientation*side<0)return false;orientation=side;}
     }
-    float2 uv=.5;
-    [unroll]for(int i=0;i<6;++i) {
-        float2 f=a+b*uv.x+d*uv.y+c*uv.x*uv.y-p,du=b+c*uv.y,dv=d+c*uv.x;
-        float determinant=du.x*dv.y-du.y*dv.x;if(abs(determinant)<0.00001)return false;
-        uv-=float2(f.x*dv.y-f.y*dv.x,du.x*f.y-du.y*f.x)/determinant;
-    }
+    float2 uv;if(!inverse_bilinear(a,b,c,d,p,uv))return false;
     if(any(isnan(uv)) || any(isinf(uv)) || any(uv<0) || any(uv>1))return false;
     if(any(abs(a+b*uv.x+d*uv.y+c*uv.x*uv.y-p)>0.001))return false;
     uint w=S(q+23),h=S(q+24),base=S(q+22);
+    // Shrunk (more texels than dots): the texel under each sample, as VDP1
+    // takes the texel under each dot's centre. Enlarged or 1:1: VDP1 puts the
+    // first texel on the first dot and the last on the last, exact halves
+    // rounded up for columns and down for rows (up when vertically flipped).
+    // Axis-aligned sprites take that texel per native dot, matching the CPU
+    // raster exactly; distorted sprites apply the same mapping continuously.
+    uint lu=S(q+33),lv=S(q+34);bool distorted=((flags>>16)&15)>=2;
     uint u=min(uint(uv.x*w),w-1),v=min(uint(uv.y*h),h-1);
+    if(w<=lu+1 && lu>0) {
+        float k=uv.x*(lu+1)-.5;if(!distorted)k=clamp(floor(k+.5),0,lu);
+        u=uint(clamp(floor(k*(w-1)/lu+.5),0,w-1));
+    }
+    if(h<=lv+1 && lv>0) {
+        float k=uv.y*(lv+1)-.5;if(!distorted)k=clamp(floor(k+.5),0,lv);
+        float t=k*(h-1)/lv;v=uint(clamp(S(q+21)?floor(t+.5):ceil(t-.5),0,h-1));
+    }
     if(S(q+20))u=w-1-u;if(S(q+21))v=h-1-v;
     uint raw=T(base+v*w+u);
     if(raw&0x2000000)return false;
@@ -46,10 +66,12 @@ bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
         float3 gb=float3(asfloat(S(q+11)),asfloat(S(q+12)),asfloat(S(q+13)))/8+16;
         float3 gc=float3(asfloat(S(q+14)),asfloat(S(q+15)),asfloat(S(q+16)))/8+16;
         float3 gd=float3(asfloat(S(q+17)),asfloat(S(q+18)),asfloat(S(q+19)))/8+16;
-        int3 top=int3(ga)+int3((gb-ga)*uv.x),bottom=int3(gd)+int3((gc-gd)*uv.x);
-        rgb=clamp(rgb+top+int3((bottom-top)*uv.y)-16,0,31);
+        // As the CPU rasterizer: the left (A-D) and right (B-C) edge colours at
+        // this row, then across the line, each rounded half away from zero.
+        float3 left=round_away(ga+(gd-ga)*uv.y),right=round_away(gb+(gc-gb)*uv.y);
+        rgb=clamp(rgb+int3(round_away(left+(right-left)*uv.x))-16,0,31);
     }
-    uint3 bytes=(uint3(rgb)<<3)|(uint3(rgb)>>2);
+    uint3 bytes=uint3(rgb)<<3; // as VDP2 expands RGB dots: 5 bits shifted, no replicated low bits
     color=bytes.r<<16|bytes.g<<8|bytes.b;return true;
 }
 float4 output_color(uint rgb){return float4(float3((rgb>>16)&255,(rgb>>8)&255,rgb&255)/255,1);}
@@ -90,7 +112,7 @@ float4 ray_shadow(Input input,float4 base) {
     int2 cell=int2(min(uint2(input.position.xy)/scale,uint2(w-1,h-1)));
     uint p=S(4)+(uint(cell.y)*w+uint(cell.x))*10,owner=S(p+8),mode=S(p+3);
     if(mode==0 || (mode&0x100) || owner==0 || owner>S(3))return base;
-    uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+33);
+    uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+35);
     if(flags==0xFFFFFFFF || ((flags>>16)&15)!=2 || area<120)return base;
     float strength=0;
     [loop]for(int step=1;step<=8;++step) {
@@ -101,7 +123,7 @@ float4 ray_shadow(Input input,float4 base) {
         if(blocker<=owner || blocker>S(3))continue;
         uint block_q=S(5)+(blocker-1)*40;
         if(S(block_q+25)==0xFFFFFFFF)continue;
-        uint block_area=S(block_q+33);
+        uint block_area=S(block_q+35);
         if(block_area>0 && block_area*3<area*2) {
             strength=.24*(1.0-float(step)/10.0);
             break;
@@ -120,6 +142,9 @@ float4 main(Input input):SV_Target {
     uint tile=S(10);
     uint bin=S(6)+(cell.y/tile*S(8)+cell.x/tile)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
     int origin=int(S(9));int2 native_cell=int2(cell)-int2(origin,0);
+    // At 1x the native centre already holds the exact CPU raster; only the
+    // widescreen side columns need geometry.
+    if(scale==1 && native_cell.x>=0 && native_cell.x<int(S(11)))return output_color(S(p));
     float2 position=(float2(int2(pixel)-int2(origin*int(scale),0))+.5)/scale-.5;
     [loop]for(uint i=count;i>0;--i) {
         uint id=S(start+i-1),q=S(5)+id*40;

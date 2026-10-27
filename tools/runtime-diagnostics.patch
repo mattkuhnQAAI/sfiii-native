@@ -2098,10 +2098,16 @@ index 91d606c..387ded9 100644
          if (n) raw(s.data(), n);
      }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..bee2cc3 100644
+index 8589d33..1ad83e1 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
-@@ -38,6 +38,7 @@
+@@ -33,11 +33,13 @@
+ #include "saturn.h"
+ #include "state.h"
+ #include "video.h"
++#include "vdp1_steps.h"
+ #include <algorithm>
+ #include <array>
  #include <climits>
  #include <cmath>
  #include <cstdlib>
@@ -2109,7 +2115,7 @@ index 8589d33..bee2cc3 100644
  #include <unordered_map>
  
  uint8_t g_vdp1_vram[0x80000];
-@@ -54,15 +55,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+@@ -54,15 +56,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
  static bool g_drawing;
  static uint64_t g_draw_end, g_frame_changes, g_draws;
  
@@ -2176,7 +2182,7 @@ index 8589d33..bee2cc3 100644
      g_reg[MODR] = 0x1000;                       // version 1
      g_reg[EDSR] = 0x0002;                       // the last draw has ended
  }
-@@ -94,6 +146,7 @@ struct Cmd {
+@@ -94,6 +147,7 @@ struct Cmd {
      uint16_t lut[16];
      Rgb g[4];                                   // A B C D
  };
@@ -2184,10 +2190,13 @@ index 8589d33..bee2cc3 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +189,65 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -135,13 +189,69 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+ }
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
- 
++static bool g_reference_raster;                 // tests: the general line walk alone
++void vdp1_reference_raster(bool on) { g_reference_raster = on; }
++
 +static void hd_quad(const Cmd& c,Pt a,Pt b,Pt cc,Pt d) {
 +    g_hd_current=0;
 +    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || c.cmode!=5
@@ -2213,7 +2222,8 @@ index 8589d33..bee2cc3 100644
 +    std::copy(xy,xy+8,q.xy);q.hflip=c.hflip;q.vflip=c.vflip;q.texture=texture;
 +    q.clip[0]=g_sys_x;q.clip[1]=g_sys_y;q.clip[2]=g_ux0;q.clip[3]=g_uy0;q.clip[4]=g_ux1;q.clip[5]=g_uy1;
 +    q.gpu_flags=c.pmod|((c.ctrl&15)<<16);q.gpu_eligible=true;
-+    for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
++    // 0x7FFF is an end code only while end codes are enabled; otherwise it is a palette dot.
++    for(auto raw:texture->raw) if(raw && !(raw==0x7FFF && !c.ecd) && !(raw&0x8000)) {q.gpu_eligible=false;break;}
 +    if((c.ctrl&15)>=2) {
 +        const Pt corners[]={a,b,cc,d};int sign=0;
 +        for(int i=0;i<4;++i) {
@@ -2232,7 +2242,7 @@ index 8589d33..bee2cc3 100644
 +    for(float value:q.shade) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
 +    scene.quads.push_back(std::move(q));g_hd_current=(uint16_t)scene.quads.size();
 +}
-+
+ 
  static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g);
  
  // A pixel already inside the clipping, or the framebuffer's edge.
@@ -2250,7 +2260,7 @@ index 8589d33..bee2cc3 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +262,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +266,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2269,7 +2279,17 @@ index 8589d33..bee2cc3 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -211,6 +321,7 @@ static uint64_t g_draw_steps;
+@@ -192,8 +306,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+ }
+ 
+ static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
+-    if (n <= 0) return a;
+-    return {a.r + (b.r - a.r) * k / n, a.g + (b.g - a.g) * k / n, a.b + (b.b - a.b) * k / n};
++    return {vdp1_steps::shade(a.r, b.r, k, n), vdp1_steps::shade(a.g, b.g, k, n), vdp1_steps::shade(a.b, b.b, k, n)};
+ }
+ 
+ // A line from p0 to p1; for a texture, row v, its columns spread along the line.
+@@ -211,6 +324,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2277,7 +2297,7 @@ index 8589d33..bee2cc3 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +367,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +370,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2290,7 +2310,7 @@ index 8589d33..bee2cc3 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +406,27 @@ struct RecFrame {
+@@ -289,6 +409,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2318,7 +2338,7 @@ index 8589d33..bee2cc3 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +450,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +453,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2333,7 +2353,7 @@ index 8589d33..bee2cc3 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +466,12 @@ static void draw() {
+@@ -320,6 +469,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2346,7 +2366,7 @@ index 8589d33..bee2cc3 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +758,11 @@ static void erase(int which) {
+@@ -606,7 +761,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2359,7 +2379,7 @@ index 8589d33..bee2cc3 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +832,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +835,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2389,7 +2409,7 @@ index 8589d33..bee2cc3 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +873,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +876,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2429,31 +2449,254 @@ index 8589d33..bee2cc3 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..55ec3b7 100644
+index 15c677f..65ccb23 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -24,14 +24,19 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
-     int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
-     int ends = 0;
-     bool stop = false;
+@@ -9,12 +9,160 @@
+ // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
+ // anti-aliasing, so no holes between lines). A texture's row is the step's
+ // (v = i * h / steps), its column the position along the line
+-// (u = k * w / length). Normal and scaled sprites are quadrilaterals too.
++// (u = k * w / length), sampled at the dot's centre when shrinking (vdp1_steps). Normal and scaled sprites are quadrilaterals too.
+ // Polylines and lines are the lines alone.
+ //
+ 
+ static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1);
+ 
++
++// floor((a * k + b) / d) for k = 0, 1, 2, ... in turn (a, b >= 0, d > 0), without a division a step.
++struct StepDiv {
++    int64_t a = 0, d = 1, q = 0, r = 0;
++    int k = 0;
++    void start(int64_t a_, int64_t b, int64_t d_) { a = a_; d = d_; q = b / d; r = b % d; k = 0; }
++    int at(int want) {                          // want >= the last k asked for
++        while (k < want) {
++            r += a; ++k;
++            if (r >= d) { if (r < 2 * d) { r -= d; ++q; } else { q += r / d; r %= d; } }
++        }
++        return (int)q;
++    }
++};
++
++// line() for the native framebuffer (16 bits a pixel, not double-density, not the scaled
++// companion): the same walk, dots, texels, end codes, Gouraud colours and clipping as the
++// general one below, with the per-dot choices (colour mode, flips, clipping, the colour
++// calculation) made once for the line and the texture column stepped without a division.
++// INSIDE: every dot of the line (its ends' bounding box holds them all, anti-aliasing dots
++// included) is inside the system clipping, the framebuffer and any user clipping that keeps the
++// inside, so the per-dot clipping tests would all pass.
++template <int MODE, bool INSIDE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
++static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
++    const int adx = std::abs(dx), ady = std::abs(dy);
++    const int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
++    const bool hd_owner = g_hd_collect && g_target == g_fb[g_draw_fb];
++    const bool store_scaled = g_render_scale != 1 && !g_gpu_available
++                              && (native_sprite_grid(c) || (c.ctrl & 15) >= 5) && g_target == g_fb[g_draw_fb];
++    const bool replace = !c.mon && (c.ccb & 3) == 0;
++    const int xmax = std::min(g_sys_x, 511), ymax = std::min(g_sys_y, 255);
++    const int ux0 = g_ux0, ux1 = g_ux1, uy0 = g_uy0, uy1 = g_uy1;
++    const bool clip = c.clip, outside = c.outside, mesh = c.mesh, gouraud = c.gouraud;
++    uint16_t* const fb = g_target;
++    const int vv = c.vflip ? c.h - 1 - v : v;
++    const uint32_t rowi = (uint32_t)(vv * c.w);
++    const int w = c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
++    // vdp1_steps::column(s, w, len, hflip) as a stepped quotient: shrink_sample or stretch_sample,
++    // or for a flipped character w - 1 - either at len - s, which is ceil(x) - 1 for the
++    // shrink's centre x and an exact half rounded up for the stretch
++    StepDiv col;
++    const bool shrink = w > len + 1;
++    if (MODE >= 0 && !hss) {
++        if (shrink) col.start(2LL * w, c.hflip ? w - 1 : w, 2LL * (len + 1));
++        else if (len > 0) col.start(2LL * (w - 1), c.hflip ? len : len - 1, 2LL * len);
++        else col.start(0, c.hflip ? w - 1 : 0, 1);
++    }
++    uint16_t mask8 = 0;
++    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
++    vdp1_steps::EndCodes ends;
 +    int sampled_u = -1;
-     auto pixel = [&](int x, int y, int k) {
-         if (stop) return;
++    // the texture memory held in a local: the framebuffer stores cannot make the compiler fetch it again
++    const uint8_t* const tex = g_tex;
++    auto pixel = [&](int x, int y, int k, bool aa) __attribute__((always_inline)) {
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
++        uint16_t pix = c.colr;
++        if constexpr (MODE >= 0) {
++            if (ends.stopped) return;
++            int u;
++            if (hss) u = vdp1_steps::hss_column(s, w, len, c.hflip, eos);
++            else {
++                u = col.at(s);
++                if (shrink && u > w - 1) u = w - 1;
++            }
++            const bool first_sample = u != sampled_u;
++            sampled_u = u;
++            const uint32_t i = rowi + (uint32_t)(c.hflip ? w - 1 - u : u);
++            bool is_end, is_zero;
++            if constexpr (MODE == 0 || MODE == 1) {
++                const uint8_t b = tex[(c.srca + i / 2) & 0x7FFFF];
++                const uint32_t raw = (i & 1) ? (b & 0xF) : (b >> 4);
++                is_end = raw == 0xF; is_zero = raw == 0;
++                pix = MODE == 0 ? (uint16_t)((c.colr & 0xFFF0) | raw) : c.lut[raw];
++            } else if constexpr (MODE == 2) {
++                const uint32_t raw = tex[(c.srca + i) & 0x7FFFF];
++                is_end = raw == 0xFF; is_zero = raw == 0;
++                pix = (uint16_t)((c.colr & ~mask8) | (raw & mask8));
++            } else {
++                // tw(): the big-endian word at an even address, read as one load
++                const uint32_t a = (c.srca + i * 2) & 0x7FFFE;
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++                uint16_t word;
++                std::memcpy(&word, tex + a, 2);
++                const uint32_t raw = __builtin_bswap16(word);
++#else
++                const uint32_t raw = (uint32_t)(tex[a] << 8 | tex[a + 1]);
++#endif
++                is_end = raw == 0x7FFF; is_zero = raw == 0;
++                pix = (uint16_t)raw;
++            }
++            if (is_end && !c.ecd) { ends.read(true, first_sample); return; }
++            if (is_zero && !c.spd) return;
++        }
++        // plot(): system clipping, user clipping, the framebuffer's edge, mesh
++        if constexpr (!INSIDE) {
++            if (x < 0 || y < 0 || x > xmax || y > ymax) return;
++            if (clip && ((x >= ux0 && x <= ux1 && y >= uy0 && y <= uy1) == outside)) return;
++        }
++        if (mesh && ((x ^ y) & 1)) return;
++        const int at = y * 512 + x;
++        if (hd_owner) g_hd_owner[g_draw_fb][at] = g_hd_current;
++        if (gouraud) { const Rgb g = mix(g0, g1, s, len); put(fb[at], c, pix, &g); }
++        else if (replace) fb[at] = pix;
++        else put(fb[at], c, pix, nullptr);
++        if (store_scaled) scaled_store(g_draw_fb, x, y, fb[at]);
++    };
++    int x = p0.x, y = p0.y;
++    if (adx >= ady) {
++        int err = 2 * ady - adx;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                y += yi;
++                err -= 2 * adx;
++            }
++            err += 2 * ady;
++            x += xi;
++        }
++    } else {
++        int err = 2 * adx - ady;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                x += xi;
++                err -= 2 * ady;
++            }
++            err += 2 * adx;
++            y += yi;
++        }
++    }
++}
++
++template <bool INSIDE>
++static void line_mode(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
++    if (!c.textured) line_native<-1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss);
++    else switch (c.cmode) {
++    case 0: line_native<0, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 1: line_native<1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 2: case 3: case 4: line_native<2, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    default: line_native<5, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    }
++}
++
+ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
+     int dx = p1.x - p0.x, dy = p1.y - p0.y;
+@@ -22,21 +170,39 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     int len = std::max(adx, ady);
+     g_draw_steps += (uint64_t)len + 1;
+     int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
+-    int ends = 0;
+-    bool stop = false;
+-    auto pixel = [&](int x, int y, int k) {
+-        if (stop) return;
++    vdp1_steps::EndCodes ends;
++    // high speed shrink (PMOD bit 12): a line with fewer dots than the character is wide
++    const bool hss = c.textured && (c.pmod & 0x1000) && (c.ctrl & 15) != 0 && len + 1 < c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
++    int sampled_u = -1;
++    if (!g_scaled_drawing && !g_hi_target && !g_fb8 && !g_reference_raster) {
++        const int x0 = std::min(p0.x, p1.x), x1 = std::max(p0.x, p1.x), y0 = std::min(p0.y, p1.y), y1 = std::max(p0.y, p1.y);
++        const bool inside = x0 >= 0 && y0 >= 0 && x1 <= std::min(g_sys_x, 511) && y1 <= std::min(g_sys_y, 255)
++                            && (!c.clip || (!c.outside && x0 >= g_ux0 && x1 <= g_ux1 && y0 >= g_uy0 && y1 <= g_uy1));
++        if (inside) line_mode<true>(c, p0, dx, dy, len, v, g0, g1, hss);
++        else line_mode<false>(c, p0, dx, dy, len, v, g0, g1, hss);
++        return;
++    }
++    // `aa` is an anti-aliasing dot: it takes the next step's texel and colour
++    auto pixel = [&](int x, int y, int k, bool aa = false) {
++        if (ends.stopped) return;
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
          uint16_t pix = c.colr;
          if (c.textured) {
              bool end;
-             int u = (int)((int64_t)k * c.w / (len + 1));
+-            int u = (int)((int64_t)k * c.w / (len + 1));
++            const int u = hss ? vdp1_steps::hss_column(s, c.w, len, c.hflip, eos)
++                              : vdp1_steps::column(s, c.w, len, c.hflip);
 +            bool first_sample = u != sampled_u;
 +            sampled_u = u;
              if (!texel(c, u, v, pix, end)) {
 -                if (end && ++ends == 2) stop = true;
 +                // Expansion and corner coverage reuse a source texel. Count its
 +                // end code only when advancing to it, not for every output pixel.
-+                if (end && first_sample && ++ends == 2) stop = true;
++                ends.read(end, first_sample);
                  return;
              }
          }
-@@ -77,19 +82,33 @@ static int step_to(int a, int b, int i, int n) {   // a + (b - a) * i / n, round
+         Rgb g;
+-        if (c.gouraud) g = mix(g0, g1, k, len);
++        if (c.gouraud) g = mix(g0, g1, s, len);
+         plot(c, x, y, pix, c.gouraud ? &g : nullptr);
+     };
+     int x = p0.x, y = p0.y;
+@@ -46,9 +212,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+             pixel(x, y, k);
+             if (k == len) break;
+             if (err > 0) {
++                // anti-aliasing (VDP1 manual, figure 1.6), see vdp1_steps::aa_corner
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
+                 y += yi;
+                 err -= 2 * adx;
+-                pixel(x, y, k);                 // anti-aliasing: the corner between the two steps
+             }
+             err += 2 * ady;
+             x += xi;
+@@ -59,9 +226,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+             pixel(x, y, k);
+             if (k == len) break;
+             if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
+                 x += xi;
+                 err -= 2 * ady;
+-                pixel(x, y, k);
+             }
+             err += 2 * adx;
+             y += yi;
+@@ -69,32 +236,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     }
+ }
+ 
+-static int step_to(int a, int b, int i, int n) {   // a + (b - a) * i / n, rounded
+-    if (n <= 0) return a;
+-    int d = (b - a) * i * 2;
+-    return a + (d >= 0 ? (d + n) / (2 * n) : -((-d + n) / (2 * n)));
++// the signed length of a side p->q along its major axis
++static int major(Pt p, Pt q) {
++    const int dx = q.x - p.x, dy = q.y - p.y;
++    return std::abs(dx) >= std::abs(dy) ? dx : dy;
+ }
  
  // the area a pixel can land in: system clipping, and the user clipping inside it
  static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1) {
@@ -2483,14 +2726,159 @@ index 15c677f..55ec3b7 100644
      int n = std::max(left, right);
 -    if (n > 2048) return;                       // a shape far off the framebuffer: the chip would spend ages on it
 -    for (int i = 0; i <= n && g_draw_steps < kDrawSteps; ++i) {
+-        Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
+-        Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
+-        int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 +    const int scale=g_scaled_drawing ? g_render_scale : 1;
 +    if (n > 2048*scale) return;                       // bound a shape far off the framebuffer
 +    for (int i = 0; i <= n && g_draw_steps < kDrawSteps*scale*scale; ++i) {
-         Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
-         Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
-         int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
++        const int jl = vdp1_steps::side_step(i, left, n, major(a, d));
++        const int jr = vdp1_steps::side_step(i, right, n, major(b, cc));
++        Pt l{vdp1_steps::side_point(a.x, d.x, jl, left), vdp1_steps::side_point(a.y, d.y, jl, left)};
++        Pt r{vdp1_steps::side_point(b.x, cc.x, jr, right), vdp1_steps::side_point(b.y, cc.y, jr, right)};
++        int v = c.textured ? vdp1_steps::row(i, c.h, n, c.vflip) : 0;
+         Rgb gl{}, gr{};
+-        if (c.gouraud) { gl = mix(c.g[0], c.g[3], i, n); gr = mix(c.g[1], c.g[2], i, n); }
++        if (c.gouraud) { gl = mix(c.g[0], c.g[3], jl, left); gr = mix(c.g[1], c.g[2], jr, right); }
+         line(c, l, r, v, gl, gr);
+     }
+ }
+diff --git a/runtime/src/video/vdp1_steps.h b/runtime/src/video/vdp1_steps.h
+new file mode 100644
+index 0000000..2e324b1
+--- /dev/null
++++ b/runtime/src/video/vdp1_steps.h
+@@ -0,0 +1,128 @@
++// saturn-recomp runtime — the step arithmetic of VDP1's shape drawing, kept apart from the
++// drawing so tests can check it. Clean-room: written from Sega's VDP1 User's Manual
++// (ST-013-R3-061694) and black-box comparison of output frames only.
++#pragma once
++#include <cstdint>
++
++namespace vdp1_steps {
++
++// a + (b - a) * k / n with an exact half rounded toward minus infinity.
++inline int lerp_half_down(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t t = (int64_t)(b - a) * k * 2 - n;          // 2n * (exact offset) - n
++    const int64_t q = t >= 0 ? (t + 2 * n - 1) / (2 * n) : -((-t) / (2 * n));
++    return a + (int)q;
++}
++// a + (b - a) * k / n with an exact half rounded toward plus infinity.
++inline int lerp_half_up(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t t = (int64_t)(b - a) * k * 2 + n;
++    const int64_t q = t >= 0 ? t / (2 * n) : -((-t + 2 * n - 1) / (2 * n));
++    return a + (int)q;
++}
++// a + (b - a) * k / n with an exact half rounded away from a.
++inline int lerp_half_away(int a, int b, int k, int n) {
++    if (n <= 0) return a;
++    const int64_t d = (int64_t)(b - a) * k * 2;
++    return a + (int)(d >= 0 ? (d + n) / (2 * n) : -((-d + n) / (2 * n)));
++}
++
++// Edge walk: the point of edge a->b at step i of n.
++inline int edge(int a, int b, int i, int n) { return lerp_half_down(a, b, i, n); }
++
++// The texel a dot takes along a span of `len + 1` steps over a character `span` texels long,
++// counted from the character's first texel, for an unflipped character. Shrinking (more texels
++// than steps): the texel under the step's centre, floor((q + 1/2) * span / (len + 1)).
++// Otherwise corner to corner: the first texel on the first step, the last on the last, an exact
++// half rounded down. Black-box: coordinate-coded characters (every texel holding its own
++// column and row) written into the reference's VRAM through its save state and drawn by it from
++// Shining Force III's own command lists (graveyard, field, bridge battle), compared with these
++// rules texel for texel; the manual puts the character's corners on the vertices but does not
++// give the sampling.
++inline int shrink_sample(int q, int span, int len) {
++    if (len < 0 || span <= 0) return 0;
++    const int s = (int)((int64_t)(2 * q + 1) * span / (2 * (len + 1)));
++    return s < span ? s : span - 1;
++}
++inline int stretch_sample(int q, int span, int len) {
++    if (len <= 0 || span <= 0) return 0;
++    return lerp_half_down(0, span - 1, q, len);
++}
++inline int sample(int q, int span, int len) {
++    return span > len + 1 ? shrink_sample(q, span, len) : stretch_sample(q, span, len);
++}
++// A flipped character is sampled as the unflipped one turned around: step q takes the texel
++// that step len - q would take unflipped, counted from the other end. (So an exact half or a
++// centre on a texel boundary goes the other way: toward the flipped character's first texel.)
++// Returned in drawing order, before the flip the texel fetch applies.
++inline int sample_flip(int q, int span, int len, bool flip) {
++    return flip ? span - 1 - sample(len - q, span, len) : sample(q, span, len);
++}
++// The texture column for dot k of a line of len + 1 dots, and the row for line i of n + 1.
++inline int column(int k, int w, int len, bool hflip = false) { return sample_flip(k, w, len, hflip); }
++inline int row(int i, int h, int n, bool vflip = false) { return sample_flip(i, h, n, vflip); }
++
++// High speed shrink (manual, PMOD bit 12 and FBCR EOS), applied to a line with fewer dots than
++// the character's width: the line steps over the character's w/2 column pairs as column() steps
++// over columns (flip included), and takes the even (eos 0) or odd (eos 1) column of each, counted
++// in the character as stored, so a flipped character keeps the parity of its stored columns.
++// Returns the column in drawing order, like column(). Black-box, as above.
++inline int hss_column(int k, int w, int len, bool hflip, int eos) {
++    const int half = w / 2;
++    if (half <= 0) return 0;
++    int j = column(k, half, len, hflip);
++    if (hflip) j = half - 1 - j;                       // the pair, counted in the stored character
++    int u = 2 * j + (eos & 1);
++    if (u > w - 1) u = w - 1;
++    return hflip ? w - 1 - u : u;
++}
++// The step an anti-aliasing dot (see aa_corner) takes its texel and Gouraud colour from: the
++// next step's, where the line is heading. Black-box, as above.
++inline int aa_step(int k, int len) { return k < len ? k + 1 : len; }
++
++// One Gouraud channel (5 bits) at step k of n between two colours: stepped as a texture is, over
++// the |b - a| + 1 values from a to b as if they were a character's texels (sample(): the centre
++// when there are more values than steps, else corner to corner, halves down), a falling run being
++// the rising one from b turned around (sample_flip()). Black-box: the reference drawing Shining
++// Force III's own command lists with every texel a flat mid grey and coded Gouraud tables written
++// into its VRAM, so each dot shows the Gouraud value; the manual gives the vertex colours only.
++inline int shade(int a, int b, int k, int n) {
++    const int span = (b > a ? b - a : a - b) + 1;
++    return b >= a ? a + sample(k, span, n) : b + sample(n - k, span, n);
++}
++// A quadrilateral's sides are walked together in n steps, n the longer side's length in dots
++// (the larger of |dx| and |dy|). Each side steps over its own length: walk step i of n is the
++// side's step i * len / n, an exact half taken toward the smaller coordinate on the side's major
++// axis (rounded down when that coordinate rises along the side, up when it falls), and the side's
++// point and Gouraud colour are those of its own step (side_point(), shade()). Black-box: the
++// reference's frames of Shining Force III's distorted sprites, where the shorter side's points and
++// colours otherwise land a dot or a shade off on exactly those halves.
++inline int side_step(int i, int len, int n, int major_delta) {
++    return major_delta >= 0 ? lerp_half_down(0, len, i, n) : lerp_half_up(0, len, i, n);
++}
++inline int side_point(int a, int b, int j, int len) { return lerp_half_down(a, b, j, len); }
++
++// Anti-aliasing (manual, figure 1.6): where a line steps both x and y, an extra pixel fills the
++// corner: (new x, old y) when x and y step the same way, (old x, new y) when they step opposite ways.
++struct Corner { int x, y; };
++inline Corner aa_corner(int x, int y, int xi, int yi) {
++    return xi == yi ? Corner{x + xi, y} : Corner{x, y + yi};
++}
++
++// Mesh (manual, PMOD bit 8): only the dots whose x and y have equal low bits are drawn.
++inline bool mesh_drawn(int x, int y) { return ((x ^ y) & 1) == 0; }
++
++// End codes (manual, ECD): an end code is transparent, and a line stops drawing at the second
++// end code read from the character. A texel repeated by enlargement is one read.
++struct EndCodes {
++    int seen = 0;
++    bool stopped = false;
++    // A texel read: returns false once the line has stopped.
++    bool read(bool end, bool new_texel) {
++        if (stopped) return false;
++        if (end && new_texel && ++seen == 2) stopped = true;
++        return !stopped;
++    }
++};
++
++}  // namespace vdp1_steps
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..e382fc0 100644
+index 4c8bcb1..2318424 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2790,7 +3178,18 @@ index 4c8bcb1..e382fc0 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +608,7 @@ static void note_unsupported() {
+@@ -305,7 +546,9 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+         else if (msb_shadow && !(d & 0x7FFF)) {
+             if (!(reg(0xE2) >> 8 & 1)) return S_NONE;                    // transparent shadows off (TPSDSL)
+             kind = S_SHADOW;
+-        } else if (dc == 0) return S_NONE;
++        }
++        // A palette dot with colour code 0 is still a dot when its priority/ratio bits are set: only an
++        // all-zero word is transparent (checked against the reference core's pictures).
+         p.shade = msb_shadow;
+         int pr = t.pr_mask ? d >> t.pr_shift & t.pr_mask : 0;
+         int cc = t.cc_mask ? d >> t.cc_shift & t.cc_mask : 0;
+@@ -367,7 +610,7 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
@@ -2799,7 +3198,7 @@ index 4c8bcb1..e382fc0 100644
      once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +634,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+@@ -393,18 +636,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -2839,7 +3238,7 @@ index 4c8bcb1..e382fc0 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +680,7 @@ void vdp2_compose(Frame& f) {
+@@ -420,7 +682,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -2848,7 +3247,7 @@ index 4c8bcb1..e382fc0 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +688,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +690,40 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -2890,7 +3289,7 @@ index 4c8bcb1..e382fc0 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +729,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,18 +731,26 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -2921,7 +3320,7 @@ index 4c8bcb1..e382fc0 100644
              Pix l[L_COUNT];
              int top = -1, second = -1;
              auto consider = [&](int i) {
-@@ -458,16 +756,32 @@ void vdp2_compose(Frame& f) {
+@@ -458,16 +758,32 @@ void vdp2_compose(Frame& f) {
                  if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
                  else if (second < 0 || l[i].prio > l[second].prio) second = i;
              };
@@ -2957,7 +3356,7 @@ index 4c8bcb1..e382fc0 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +799,12 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +801,12 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -2972,7 +3371,7 @@ index 4c8bcb1..e382fc0 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +820,128 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +822,128 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -3171,7 +3570,7 @@ index 88d1642..c9182c1 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..c68e655 100644
+index ebaa466..ee8d771 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3182,7 +3581,7 @@ index ebaa466..c68e655 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,49 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,23 +18,50 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -3197,6 +3596,7 @@ index ebaa466..c68e655 100644
  uint64_t vdp1_frame_changes();
  uint64_t vdp1_draws();
 -void vdp1_dump(FILE* f);                             // VRAM, the draw framebuffer, the registers
++void vdp1_reference_raster(bool on);                 // tests: every line by the general walk, not the native-framebuffer one
 +void vdp1_dump(FILE* f, bool shown = false);          // VRAM, a framebuffer, the registers
  bool vdp1_interp_field(bool compose);                // --interp: a frame in between for this field?
  void vdp1_interp_scroll(uint8_t* regs);              // ... and VDP2's scroll registers for it
@@ -3233,6 +3633,17 @@ index ebaa466..c68e655 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
+index 39eb423..2a9884c 100644
+--- a/runtime/tests/CMakeLists.txt
++++ b/runtime/tests/CMakeLists.txt
+@@ -8,5 +8,5 @@ if(NOT CMAKE_BUILD_TYPE)
+   set(CMAKE_BUILD_TYPE Release)
+ endif()
+ include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
+-add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp vdp1_raster_test.cpp)
+ target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3266,6 +3677,263 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
+new file mode 100644
+index 0000000..fb24b1d
+--- /dev/null
++++ b/runtime/tests/vdp1_raster_test.cpp
+@@ -0,0 +1,84 @@
++// The native-framebuffer line walk (vdp1_raster.inc, line_native) against the general one it
++// stands in for: random command tables over random VRAM, drawn both ways, dot for dot.
++#include "test.h"
++#include "video.h"
++#include <cstring>
++#include <random>
++#include <vector>
++
++namespace {
++
++void be16(uint32_t a, uint16_t v) { g_vdp1_vram[a & 0x7FFFF] = (uint8_t)(v >> 8); g_vdp1_vram[(a + 1) & 0x7FFFF] = (uint8_t)v; }
++
++std::vector<uint16_t> draw(bool reference, uint16_t fbcr) {
++    vdp1_reference_raster(reference);
++    vdp1_reg_write(0x00, 0, 2);                          // TVMR: 16 bits a pixel
++    vdp1_reg_write(0x02, fbcr & 0x10, 2);                // FBCR: EOS for high speed shrink only
++    for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, (uint32_t)(i * 2654435761u >> 16), 2);
++    vdp1_reg_write(0x04, 1, 2);                          // PTMR 1: draw now
++    std::vector<uint16_t> fb(512 * 256);
++    for (int i = 0; i < 512 * 256; ++i) fb[i] = (uint16_t)vdp1_fb_read(i * 2, 2);
++    vdp1_reference_raster(false);
++    return fb;
++}
++
++// A table of `n` random commands after system clipping, user clipping and local coordinates.
++void random_table(std::mt19937& rng, int n) {
++    auto r = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
++    // textures, colour tables and Gouraud tables: values biased toward 0 and the end codes
++    for (uint32_t a = 0x10000; a < 0x80000; a += 2) {
++        int k = r(0, 15);
++        uint16_t v = k == 0 ? 0 : k == 1 ? 0x7FFF : k == 2 ? 0xFFFF : k == 3 ? 0xF0F0 : (uint16_t)r(0, 0xFFFF);
++        be16(a, v);
++    }
++    uint32_t a = 0;
++    auto cmd = [&](uint16_t ctrl, uint16_t pmod, uint16_t colr, uint16_t srca, uint16_t size, const int* xy, uint16_t grda) {
++        be16(a, ctrl); be16(a + 2, 0); be16(a + 4, pmod); be16(a + 6, colr); be16(a + 8, srca); be16(a + 10, size);
++        for (int i = 0; i < 8; ++i) be16(a + 12 + i * 2, (uint16_t)xy[i]);
++        be16(a + 28, grda); be16(a + 30, 0);
++        a += 0x20;
++    };
++    int z[8] = {};
++    int sys[8] = {0, 0, 0, 0, r(100, 511), r(60, 255), 0, 0};
++    cmd(0x0009, 0, 0, 0, 0, sys, 0);
++    int user[8] = {r(0, 200), r(0, 120), 0, 0, r(100, 400), r(60, 250), 0, 0};
++    cmd(0x0008, 0, 0, 0, 0, user, 0);
++    int local[8] = {r(-30, 60), r(-30, 60), 0, 0, 0, 0, 0, 0};
++    cmd(0x000A, 0, 0, 0, 0, local, 0);
++    (void)z;
++    for (int i = 0; i < n; ++i) {
++        int comm = r(0, 7);
++        uint16_t ctrl = (uint16_t)(comm | (r(0, 3) << 4) | (comm == 1 ? r(0, 15) << 8 : 0));
++        int cmode = r(0, 5);
++        uint16_t pmod = (uint16_t)(r(0, 7) | cmode << 3 | r(0, 1) << 6 | r(0, 1) << 7 | (r(0, 3) == 0) << 8 |
++                                   r(0, 1) << 9 | r(0, 1) << 10 | (r(0, 7) == 0) << 15 | r(0, 1) << 12);
++        uint16_t colr = (uint16_t)(cmode == 1 ? (0x10000 + r(0, 0x1000) * 32) / 8 : r(0, 0xFFFF));
++        uint16_t srca = (uint16_t)((0x10000 + r(0, 0x6000) * 8) / 8);
++        uint16_t size = (uint16_t)(r(1, 8) << 8 | r(1, 64));
++        int xy[8];
++        for (int k = 0; k < 8; ++k) xy[k] = r(0, 9) == 0 ? r(-400, 900) : r(-40, 360);
++        if (comm == 1 && (ctrl >> 8 & 15)) { xy[2] = r(-20, 200); xy[3] = r(-20, 200); }
++        for (int& v : xy) v &= 0x1FFF;
++        cmd(ctrl, pmod, colr, srca, size, xy, (uint16_t)((0x10000 + r(0, 0x1000) * 8) / 8));
++    }
++    be16(a, 0x8000);                                     // END
++}
++
++}  // namespace
++
++TEST(native_line_walk_draws_as_the_general_one) {
++    std::mt19937 rng(20261025);
++    int differing = 0, drawn = 0;
++    for (int round = 0; round < 60; ++round) {
++        std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);
++        random_table(rng, 40);
++        const uint16_t fbcr = (uint16_t)(round & 1 ? 0x10 : 0);
++        std::vector<uint16_t> fast = draw(false, fbcr), ref = draw(true, fbcr);
++        for (int i = 0; i < 512 * 256; ++i) {
++            differing += fast[i] != ref[i];
++            drawn += ref[i] != (uint16_t)(i * 2654435761u >> 16);
++        }
++    }
++    CHECK_EQ(differing, 0);
++    CHECK_EQ(drawn > 100000, true);
++}
+diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
+new file mode 100644
+index 0000000..472e126
+--- /dev/null
++++ b/runtime/tests/vdp1_steps_test.cpp
+@@ -0,0 +1,137 @@
++// VDP1's step arithmetic (vdp1_steps.h) against the rules of Sega's VDP1 User's Manual.
++#include "../src/video/vdp1_steps.h"
++#include "test.h"
++
++using namespace vdp1_steps;
++
++// Figure 1.6: x and y stepping the same way put the extra dot at (new x, old y).
++TEST(aa_corner_same_direction_is_new_x_old_y) {
++    auto a = aa_corner(10, 20, 1, 1);  CHECK_EQ(a.x, 11); CHECK_EQ(a.y, 20);
++    auto b = aa_corner(10, 20, -1, -1); CHECK_EQ(b.x, 9); CHECK_EQ(b.y, 20);
++}
++// Figure 1.6: opposite directions put it at (old x, new y).
++TEST(aa_corner_opposite_direction_is_old_x_new_y) {
++    auto a = aa_corner(10, 20, 1, -1);  CHECK_EQ(a.x, 10); CHECK_EQ(a.y, 19);
++    auto b = aa_corner(10, 20, -1, 1);  CHECK_EQ(b.x, 10); CHECK_EQ(b.y, 21);
++}
++TEST(mesh_draws_dots_with_equal_low_bits) {
++    CHECK_EQ(mesh_drawn(0, 0), true);  CHECK_EQ(mesh_drawn(1, 1), true);
++    CHECK_EQ(mesh_drawn(1, 0), false); CHECK_EQ(mesh_drawn(0, 3), false);
++    CHECK_EQ(mesh_drawn(-2, 4), true);
++}
++TEST(end_code_stops_the_line_at_the_second_read) {
++    EndCodes e;
++    CHECK_EQ(e.read(false, true), true);
++    CHECK_EQ(e.read(true, true), true);   // first end code: transparent, line goes on
++    CHECK_EQ(e.read(true, false), true);  // the same texel again (enlarged): not a new read
++    CHECK_EQ(e.read(false, true), true);
++    CHECK_EQ(e.read(true, true), false);  // second end code: stop
++    CHECK_EQ(e.read(false, true), false);
++}
++// Texture columns map the character's first and last columns on the line's ends.
++TEST(column_maps_corners_to_ends) {
++    CHECK_EQ(column(0, 16, 15), 0);
++    CHECK_EQ(column(15, 16, 15), 15);
++    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15), k);   // 1:1 is the identity
++    CHECK_EQ(column(31, 16, 31), 15);                              // enlarged x2
++    CHECK_EQ(column(7, 16, 7), 15);                                // reduced to 8 dots
++    CHECK_EQ(column(0, 16, 7), 1);                                 // its dots' centres
++    CHECK_EQ(column(0, 8, 0), 4);                                  // one dot: the middle
++}
++// A flipped character is sampled as the unflipped one turned around (drawing order returned).
++TEST(flipped_columns_mirror_the_unflipped_sampling) {
++    for (int len = 0; len < 40; ++len)
++        for (int w = 1; w <= 33; ++w)
++            for (int k = 0; k <= len; ++k)
++                CHECK_EQ(column(k, w, len, true), w - 1 - column(len - k, w, len));
++    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15, true), k);   // 1:1 still the identity
++    CHECK_EQ(column(0, 8, 0, true), 3);                                   // one dot: the other middle
++    // the flipped 48 -> 45 shrink: centres on texel boundaries go toward the first texel
++    CHECK_EQ(column(7, 48, 44), 8); CHECK_EQ(column(7, 48, 44, true), 7);
++}
++TEST(exact_halves_round_down_unflipped_and_up_flipped) {
++    // 3 texels over 5 dots: k*(2)/4 has halves at k=1 and k=3
++    CHECK_EQ(column(1, 3, 4), 0); CHECK_EQ(column(3, 3, 4), 1);
++    CHECK_EQ(column(1, 3, 4, true), 1); CHECK_EQ(column(3, 3, 4, true), 2);
++    CHECK_EQ(row(1, 3, 4), 0);    CHECK_EQ(row(3, 3, 4), 1);
++    CHECK_EQ(row(4, 3, 4), 2);
++    CHECK_EQ(row(1, 32, 5), 3 * 32 / 12); CHECK_EQ(row(1, 32, 5, true), 7);   // shrink: 8 -> 7 flipped
++}
++TEST(edge_walk_hits_both_vertices_and_rounds_halves_down) {
++    CHECK_EQ(edge(5, 9, 0, 4), 5); CHECK_EQ(edge(5, 9, 4, 4), 9);
++    CHECK_EQ(edge(0, 1, 1, 2), 0);   // 0.5 -> 0
++    CHECK_EQ(edge(0, -1, 1, 2), -1); // -0.5 -> -1
++    CHECK_EQ(edge(0, 3, 1, 2), 1);   // 1.5 -> 1
++    CHECK_EQ(edge(7, 7, 3, 0), 7);
++}
++TEST(gouraud_steps_like_a_texture) {
++    // 32 values over 5 dots: more values than dots, so the centres (2k + 1) * 32 / 10
++    CHECK_EQ(shade(0, 31, 0, 4), 3);  CHECK_EQ(shade(0, 31, 1, 4), 9);
++    CHECK_EQ(shade(0, 31, 3, 4), 22); CHECK_EQ(shade(0, 31, 4, 4), 28);
++    // a falling run is the rising one turned around
++    for (int k = 0; k <= 4; ++k) CHECK_EQ(shade(31, 0, k, 4), shade(0, 31, 4 - k, 4));
++    // fewer values than dots: corner to corner, halves down
++    CHECK_EQ(shade(16, 18, 0, 8), 16); CHECK_EQ(shade(16, 18, 8, 8), 18);
++    CHECK_EQ(shade(16, 18, 2, 8), 16); CHECK_EQ(shade(16, 18, 6, 8), 17);
++    CHECK_EQ(shade(7, 7, 3, 9), 7);
++}
++TEST(quad_sides_step_over_their_own_length) {
++    // a side of 4 dots walked in 5 steps: ends on both vertices, 2.4 -> 2
++    CHECK_EQ(side_step(0, 4, 5, 4), 0); CHECK_EQ(side_step(5, 4, 5, 4), 4);
++    CHECK_EQ(side_step(3, 4, 5, 4), 2);
++    // an exact half goes toward the smaller major coordinate: 52 dots in 56 steps, step 7 is 6.5
++    CHECK_EQ(side_step(7, 52, 56, 52), 6);   // rising side: down
++    CHECK_EQ(side_step(7, 52, 56, -52), 7);  // falling side: up, i.e. further toward the minus end
++    CHECK_EQ(side_point(-5, -4, 6, 52), -5); CHECK_EQ(side_point(-107, -55, 6, 52), -101);
++    CHECK_EQ(side_point(10, -42, 7, 52), 3);
++    CHECK_EQ(side_step(0, 0, 9, 0), 0);
++}
++
++// High speed shrink steps over column pairs and takes one parity of the stored character.
++TEST(high_speed_shrink_samples_one_parity_of_stored_columns) {
++    for (int len = 0; len < 15; ++len)
++        for (int k = 0; k <= len; ++k) {
++            CHECK_EQ(hss_column(k, 16, len, false, 0) % 2, 0);
++            CHECK_EQ(hss_column(k, 16, len, false, 1) % 2, 1);
++            // flipped: the stored column (15 - drawn) keeps the parity
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 0)) % 2, 0);
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 1)) % 2, 1);
++        }
++    // 48 wide on 32 dots (the church wall): 24 pairs enlarged onto 32 dots, every pair used
++    bool used[24] = {};
++    for (int k = 0; k < 32; ++k) used[hss_column(k, 48, 31, false, 0) / 2] = true;
++    for (bool u : used) CHECK_EQ(u, true);
++    // 48 wide on 8 dots: pairs sampled at the dots' centres, (2k + 1) * 24 / 16
++    CHECK_EQ(hss_column(0, 48, 7, false, 0), 2);
++    CHECK_EQ(hss_column(7, 48, 7, false, 1), 2 * 22 + 1);
++    // a flipped 16-wide character on 4 dots, eos 0: the 8 pairs shrink onto 4 dots at centres
++    // 1,3,5,7 counted from the flipped end, i.e. stored pairs 7,5,3,1 (columns 14,10,6,2),
++    // which the flip draws at 1,5,9,13
++    CHECK_EQ(hss_column(0, 16, 3, true, 0), 1);
++    CHECK_EQ(hss_column(1, 16, 3, true, 0), 5);
++    CHECK_EQ(hss_column(3, 16, 3, true, 0), 13);
++    CHECK_EQ(hss_column(0, 15, 3, false, 1), 1);
++    CHECK_EQ(hss_column(5, 1, 3, false, 1), 0);   // no pair: column 0
++}
++// Shrinking samples under the dot's centre; enlarging maps corner to corner.
++TEST(shrink_samples_at_dot_centres) {
++    for (int q = 0; q < 8; ++q) CHECK_EQ(shrink_sample(q, 16, 7), 2 * q + 1);
++    CHECK_EQ(shrink_sample(0, 48, 31), 0);  CHECK_EQ(shrink_sample(31, 48, 31), 47);
++    CHECK_EQ(shrink_sample(1, 48, 31), 2);  // 1.5 * 48 / 32 = 2.25
++    CHECK_EQ(shrink_sample(0, 5, 0), 2);    // one dot: the middle texel
++    CHECK_EQ(column(3, 16, 7), 7);          // shrunk columns sample centres
++    CHECK_EQ(row(3, 16, 7), 7);             // and so do rows
++    CHECK_EQ(row(1, 3, 4), 0);              // enlarged rows: corner to corner, halves down
++    CHECK_EQ(row(1, 3, 4, true), 1);        // a vertically flipped one rounds halves up
++    CHECK_EQ(row(3, 3, 4, true), 2);
++    CHECK_EQ(row(2, 3, 4, true), 1);
++    CHECK_EQ(row(3, 16, 7, true), 6);       // shrunk rows mirror too: a centre on a boundary goes up
++    CHECK_EQ(column(1, 3, 4), 0);           // enlarged columns: halves down too
++}
++// An anti-aliasing dot takes the next step's texel and colour, never past the line's end.
++TEST(aa_dot_takes_the_next_step) {
++    CHECK_EQ(aa_step(0, 5), 1);
++    CHECK_EQ(aa_step(4, 5), 5);
++    CHECK_EQ(aa_step(5, 5), 5);
++    CHECK_EQ(aa_step(0, 0), 0);
++}
+diff --git a/runtime/tests/vdp2_test.cpp b/runtime/tests/vdp2_test.cpp
+index 8229575..6a5ab11 100644
+--- a/runtime/tests/vdp2_test.cpp
++++ b/runtime/tests/vdp2_test.cpp
+@@ -187,6 +187,19 @@ TEST(msb_shadow_halves_the_sprite_itself) {
+     CHECK_EQ(at(f, 10, 0), kBlue);
+ }
+ 
++TEST(colour_code_0_with_priority_bits_is_a_dot) {
++    // Only an all-zero sprite word is transparent: colour code 0 with other bits set shows colour 0
++    // (a town's darkened road strip, 0x4800 in type 4, is drawn this way; checked against the reference).
++    sprites_over_green();
++    reg(0xF0, 0x0303);                           // PRISA: sprite priorities 0 and 1 are 3
++    cram16(0, 0x7C00);
++    show_sprites(0x4000, 10, 19);                // type 2: priority bit set, colour code 0
++    Frame f;
++    vdp2_compose(f);
++    CHECK_EQ(at(f, 10, 0), kBlue);
++    CHECK_EQ(at(f, 20, 0), kGreen);
++}
++
+ TEST(transparent_shadow_needs_tpsdsl) {
+     sprites_over_green();
+     reg(0xE2, 0x0001);
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py

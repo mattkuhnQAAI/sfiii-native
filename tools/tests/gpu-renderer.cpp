@@ -9,7 +9,8 @@
 #include <stdexcept>
 #include <cstdio>
 static void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
-static uint32_t rgb555(uint16_t d){const unsigned r=d&31,g=d>>5&31,b=d>>10&31;return ((r<<3|r>>2)<<16)|((g<<3|g>>2)<<8)|(b<<3|b>>2);}
+// VDP2 shows an RGB dot's 5-bit channels shifted left by 3, as the CPU composition does.
+static uint32_t rgb555(uint16_t d){const unsigned r=d&31,g=d>>5&31,b=d>>10&31;return (r<<19)|(g<<11)|(b<<3);}
 static Frame fixture(int w=4,int h=4) {
     Frame f;f.w=w;f.h=h;f.px.assign(w*h,0x112233);f.hd=std::make_shared<HdScene>();f.hd->composition.resize(w*h);
     for(auto& p:f.hd->composition){p.absent=0x112233;p.mode=1;}return f;
@@ -49,7 +50,7 @@ int main(int argc,char** argv) {
             auto out=rendered(gpu,f,4);uint32_t expected=0x40A0D0;
             if(mode) {
                 expected=0;const int offset[]={-17,9,260};
-                for(int c=0;c<3;++c){int sh=16-c*8;unsigned a=(0xFF0000>>sh)&255,b=(0x40A0D0>>sh)&255,v=a;
+                for(int c=0;c<3;++c){int sh=16-c*8;unsigned a=(0xF80000>>sh)&255,b=(0x40A0D0>>sh)&255,v=a;
                     if(mode==2)v=(a*(31-ratio)+b*(ratio+1))>>5;if(mode==3 || mode==5)v=std::min(a+b,255u);if(mode==4)v=(b*(31-ratio)+a*(ratio+1))>>5;
                     expected|=unsigned(std::clamp(int(v)+offset[c],0,255))<<sh;}
             }
@@ -58,9 +59,9 @@ int main(int argc,char** argv) {
         for(int scale:{2,4,5}) {
             auto f=fixture(8,2);auto q=quad({0x801F,0x7FFF,0x83E0,0x7FFF,0xFC00,0xFC00,0xFC00,0xFC00},8,1,0,0,7,0);q.gpu_flags=0;f.hd->quads.push_back(q);
             auto out=rendered(gpu,f,scale);
-            for(int x=0;x<8*scale;++x){uint32_t expected=x/scale==0?0xFF0000:x/scale==2?0x00FF00:0x112233;check(out.px[x]==expected,"Two distinct source end codes terminate texture row");}
+            for(int x=0;x<8*scale;++x){uint32_t expected=x/scale==0?0xF80000:x/scale==2?0x00F800:0x112233;check(out.px[x]==expected,"Two distinct source end codes terminate texture row");}
             f.hd->quads[0].hflip=true;out=rendered(gpu,f,scale);
-            for(int x=0;x<8*scale;++x){uint32_t expected=x/scale<4?0x0000FF:x/scale==5?0x00FF00:0x112233;check(out.px[x]==expected,"Flipped end-code traversal direction and cached texture variant");}
+            for(int x=0;x<8*scale;++x){uint32_t expected=x/scale<4?0x0000F8:x/scale==5?0x00F800:0x112233;check(out.px[x]==expected,"Flipped end-code traversal direction and cached texture variant");}
             f.hd->quads.clear();q=quad({0},1,1,0,0,7,1);q.gpu_flags=0xC0;f.hd->quads.push_back(q);
             out=rendered(gpu,f,scale);for(auto p:out.px)check(p==0x112233,"SPD zero clears to background");
             f.hd->quads[0].texture->raw[0]=0x8000;out=rendered(gpu,f,scale);for(auto p:out.px)check(p==0,"Opaque RGB black remains black");
@@ -75,7 +76,7 @@ int main(int argc,char** argv) {
             auto out=rendered(gpu,f,scale);
             for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x) {
                 int cx=x/scale,cy=y/scale;bool inside=cx>=1 && cy>=1 && cx<=2 && cy<=2;
-                check(out.px[y*out.w+x]==((cx<=2 && cy<=2 && inside!=outside)?0xFF0000:0x112233),"System and user clipping boundaries");
+                check(out.px[y*out.w+x]==((cx<=2 && cy<=2 && inside!=outside)?0xF80000:0x112233),"System and user clipping boundaries");
             }++cases;
         }
         for(int scale:{2,4,5}) {
@@ -83,7 +84,7 @@ int main(int argc,char** argv) {
             f.hd->quads.push_back(quad({0,0x83E0},2,1,0,0,3,3));
             auto out=rendered(gpu,f,scale);
             for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x)
-                check(out.px[y*out.w+x]==(x<out.w/2?0xFF0000:0x00FF00),"Transparent foreground preserves earlier primitive");
+                check(out.px[y*out.w+x]==(x<out.w/2?0xF80000:0x00F800),"Transparent foreground preserves earlier primitive");
             f.hd->quads.clear();auto q=quad({0xC210},1,1,0,0,3,3);q.gpu_flags|=4;
             for(int i=0;i<4;++i){q.shade[i*3]=8;q.shade[i*3+1]=-8;q.shade[i*3+2]=0;}
             f.hd->quads.push_back(q);out=rendered(gpu,f,scale);
@@ -120,18 +121,23 @@ int main(int argc,char** argv) {
             auto out=rendered(gpu,f,scale);
             for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x) {
                 bool covered=x/scale>=x0 && x/scale<=x0+6 && y/scale>=2 && y/scale<=4;
-                check(out.px[y*out.w+x]==(covered?0xFF0000:0x112233),"Small-bin inclusive and clipped coverage");
+                check(out.px[y*out.w+x]==(covered?0xF80000:0x112233),"Small-bin inclusive and clipped coverage");
             }
             ++cases;
         }
         Frame disabled;std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);check(!vdp2_compose_wide(disabled),"Display-off must retain original framing");++cases;
-        for(int scale:{1,2,4,5}) {
+        {
+            // At 1x the native centre is the exact CPU raster; geometry is not resampled.
+            auto f=fixture();f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));f.px[5]=0xABCDEF;
+            check(rendered(gpu,f,1).px==f.px,"1x must present the exact native CPU raster");++cases;
+        }
+        for(int scale:{2,4,5}) {
             auto f=fixture();f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));
             auto first=rendered(gpu,f,scale);auto draws=gpu.submissions(),hits=gpu.cache_hits();
             for(int i=0;i<3;++i)check(rendered(gpu,f,scale).px==first.px,"Repeated-field cache changed pixels");
             check(gpu.submissions()==draws && gpu.cache_hits()==hits+3,"Identical inputs must avoid GPU resubmission");
             f.hd->quads[0].texture->raw[0]=0x83E0;auto changed=rendered(gpu,f,scale);
-            check(gpu.submissions()==draws+1 && changed.px[0]==0x00FF00,"Texture changes must invalidate cache");
+            check(gpu.submissions()==draws+1 && changed.px[0]==0x00F800,"Texture changes must invalidate cache");
             f.hd->quads[0].clip[0]=1;changed=rendered(gpu,f,scale);
             check(gpu.submissions()==draws+2 && changed.px[3*scale]==0x112233,"Clipping changes must invalidate cache");
             f.hd->composition[0].mode=0x100;f.px[0]=0xABCDEF;changed=rendered(gpu,f,scale);

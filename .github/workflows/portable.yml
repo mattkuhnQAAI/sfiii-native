@@ -90,6 +90,14 @@ jobs:
           else
             python -B tools/validate-posix-package.py --package "$PACKAGE" --out "$RUNNER_TEMP/sfiii-validation"
           fi
+      - name: Upload GPU parity diff images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-parity-${{ matrix.target }}
+          path: ${{ runner.temp }}/sfiii-validation/gpu-parity
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Archive candidate and checksum
         env:
           TARGET: ${{ matrix.target }}
