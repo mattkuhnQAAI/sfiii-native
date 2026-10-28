@@ -64,6 +64,8 @@ Profiles can describe independently loaded images within `module_containers`. Sc
 
 Scenario 2 v24 loads its separate X3 effect files at 0x06049000. The normal Healing Drop route exercises X3ITEM; other effects with matching loader/export evidence are compilation candidates until exercised. X3ELEM5 remains under review because its exports do not fit that destination. X046 also has distinct revision-specific destinations in all three scenarios; loader evidence permits compilation but does not certify its gameplay path.
 
+Scene (X1) modules also get entries for callbacks that only their own data tables point to (`tools/scene_data_entries.py`): an aligned word that points into the same image becomes an entry only when a straight walk from it decodes as plausible SH-2 code. `generate.py` logs every accepted and rejected candidate to `scene-data-entries.tsv` in the generated-code directory and prints a per-module count.
+
 ## Known coverage limits
 
 Direct loader/call evidence now covers X025 at 0x06078000 in Scenarios 2/3, X048 at 0x06049000 in Scenario 2 or 0x06048D00 in Scenario 3, and X049 at 0x060A0000 in Scenarios 1/2 or 0x06048D00 in Scenario 3. These scene/ending paths remain unexecuted in the current route suite. Some scene programs first request files with r5=0, then load them to a real destination later; the earlier zero-destination request alone must not establish a mapping. Numeric file IDs also appear in unrelated resource APIs, so an equal integer is not loader evidence.

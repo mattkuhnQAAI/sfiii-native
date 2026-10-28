@@ -46,6 +46,7 @@
 !/tools/dev-env.ps1
 !/tools/generate.py
 !/tools/module_entries.py
+!/tools/scene_data_entries.py
 !/tools/module_images.py
 !/tools/probe.py
 !/tools/disc_profile.py
