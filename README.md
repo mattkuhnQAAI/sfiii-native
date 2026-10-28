@@ -20,7 +20,9 @@ The v0.6.0 Linux/macOS candidates have not been added to the release downloads; 
 | --- | --- | --- |
 | Scenario 1 | USA MK-81383 V1.001, unpatched | Local title, town, battle and transition routes; full campaign unvalidated. |
 | Scenario 2 | Shining Force III Translation Project v24, registered disc contents | The broadest local gameplay testing: towns, battles, menus, selected item/spell paths and native-state continuations. Other routes and effects remain unvalidated. |
+| Scenario 2 | Translation Project V25.1 (default selection, no V25+ add-ons) applied to a GS-9188 V1.003 or V2.000 (Rev A) disc, registered disc contents (`scenario2-v25_1-v1_003.json`, `scenario2-v25_1-v2_000.json`) | Experimental. Native boot to the opening scene checked headless on Linux; gameplay unvalidated. |
 | Scenario 3 | Shining Force III Translation Project v25.1, registered disc contents | Fresh-game setup, ship dialogue, first-battle screen and priest interior reached in limited Windows routes. Broader battles and campaign transfers remain unvalidated. |
+| Scenario 3 | Translation Project V25.1 (default selection, no V25+ add-ons) applied to a GS-9203 V1.001 Redump disc, registered disc contents (`scenario3-v25_1-redump.json`) | Experimental. Native boot to the opening scene checked headless on Linux; gameplay unvalidated. |
 | Premium Disc / other revisions | No registered profile yet | Planned; currently unsupported. |
 
 Disc verification checks contents, so a matching filename or translation label alone does not establish compatibility. Static module compilation and actual gameplay coverage are tracked separately in [Status and validation](#status-and-validation).
@@ -117,7 +119,7 @@ Selected PNG screenshots are hosted as release documentation, outside the source
 
 - **Windows:** Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
 - **Linux/macOS preview:** Ubuntu 22.04 or newer x86-64 desktop, or macOS 13 or newer on Apple Silicon/Intel; see [platform requirements](docs/POSIX.md).
-- Your own supported **BIN/CUE or standalone CHD** disc: unpatched Scenario 1 USA V1.001, the registered Scenario 2 Translation Project v24 edition, or the registered Scenario 3 Translation Project v25.1 edition. Disc contents are verified; a filename or patch label alone is insufficient. The Scenario 1 data-track SHA-256 is:
+- Your own supported **BIN/CUE or standalone CHD** disc: unpatched Scenario 1 USA V1.001, the registered Scenario 2 Translation Project v24 edition or V25.1 on V1.003/V2.000, or the registered Scenario 3 Translation Project v25.1 edition (including V25.1 on the Redump base). Disc contents are verified; a filename or patch label alone is insufficient. The Scenario 1 data-track SHA-256 is:
 
   `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`
 
