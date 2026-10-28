@@ -3267,10 +3267,37 @@ index 6943552..0c64057 100644
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
-index de3d7ec..a14fa32 100644
+index de3d7ec..d2a01c4 100644
 --- a/src/saturnrecomp/recomp/__main__.py
 +++ b/src/saturnrecomp/recomp/__main__.py
-@@ -114,18 +114,42 @@ def volatile_literals(prog):
+@@ -87,16 +87,22 @@ def volatile_literals(prog):
+         ins = img.insn(a)
+         if ins.op == "mova":
+             # stores through r0 in the straight line after, until r0 changes
+-            for b in range(a + 2, a + 12, 2):
+-                if b not in prog.code:
+-                    break
+-                j = img.insn(b)
++            def store(j):
+                 if j.n == 0 and j.fmt in ("mov.l Rm,@Rn", "mov.w Rm,@Rn", "mov.b Rm,@Rn"):
+                     values.add(ins.target)
+                 elif j.n == 0 and j.fmt in ("mov.l Rm,@(disp,Rn)", "mov.w r0,@(disp,Rn)", "mov.b r0,@(disp,Rn)"):
+                     values.add(ins.target + j.disp)
++            for b in range(a + 2, a + 12, 2):
++                if b not in prog.code:
++                    break
++                j = img.insn(b)
++                store(j)
+                 if j.op in discover.Program._STOPS or j.op in ("bt", "bf", "bt/s", "bf/s", "jsr", "bsr") \
+                         or 0 in discover._writes(j):
++                    # a delayed branch runs its slot first, with r0 still the mova address
++                    # (`mova SLOT,r0; rts; mov.w r4,@r0`): a store there is one too
++                    if j.delay and 0 not in discover._writes(j) and b + 2 in prog.code:
++                        store(img.insn(b + 2))
+                     break
+         if ins.op in ("mov.w", "mov.l") and ins.size and ins.target is not None:
+             pools[ins.target] = ins.size
+@@ -114,18 +120,42 @@ def volatile_literals(prog):
  
  class Module:
      def __init__(self, name, path, base, seeds=(), hooks=(), runtime_literals=False, callable_entry=False,
@@ -3316,7 +3343,7 @@ index de3d7ec..a14fa32 100644
          self.files, self.sites, self.unknown, self.rows = [], {}, [], []
          self.n_ins = self.n_calls = 0
  
-@@ -154,9 +178,10 @@ class Module:
+@@ -154,9 +184,10 @@ class Module:
              self.files.append(name)
              buf, places, count, idx = [], [], 0, idx + 1
  
@@ -3329,7 +3356,7 @@ index de3d7ec..a14fa32 100644
              lines = body.emit()
              lines.insert(1, "    ran[%d] = 1;" % i)              # for --coverage: this function has run
              buf.append("\n".join(lines))
-@@ -190,7 +215,7 @@ class Module:
+@@ -190,7 +221,7 @@ class Module:
              f.write("};\n\n")
              f.write("uint8_t ran[%d];\n" % len(self.entries))
              f.write("static const uint16_t sizes[] = {%s};\n\n"
@@ -3338,7 +3365,7 @@ index de3d7ec..a14fa32 100644
              f.write('extern const SH2Module module = {"%s", 0x%08Xu, %du, 0x%08Xu, funcs, %d, ran, sizes, %s};\n'
                      % (self.name, self.base, len(self.data), self.crc, len(self.entries),
                         "true" if self.callable_entry else "false"))
-@@ -256,13 +281,14 @@ endif()
+@@ -256,13 +287,14 @@ endif()
  
  
  def generate(specs, out, per_file=8000, comments=True, optest=False, log=print, hooks=None, tasks=None,
@@ -3354,7 +3381,7 @@ index de3d7ec..a14fa32 100644
      t0 = time.time()
      os.makedirs(out, exist_ok=True)
      if optest:
-@@ -273,7 +299,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+@@ -273,7 +305,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
      for name, path, base, seeds in specs:
          t = time.time()
          m = Module(name, path, base, seeds, hooks.get(name, ()), name in runtime_literals,
@@ -3363,7 +3390,7 @@ index de3d7ec..a14fa32 100644
          m.generate(out, per_file, comments, log)
          missing = m.hooks - {a for f in m.prog.funcs.values() for a in f.code}
          if missing:
-@@ -288,6 +314,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+@@ -288,6 +320,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
          for m in modules:
              f.write("    &%s::module,\n" % m.ns)
          f.write("};\nextern const int g_sh2_nmodules = %d;\n" % len(modules))
