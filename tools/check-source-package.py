@@ -33,7 +33,7 @@ def main():
             failures.append([name, 'not in publication source directories'])
         if path.parts[0] in {'native','tools'} and path.suffix.lower() not in SOURCE_SUFFIXES and path.name != 'CMakeLists.txt':
             failures.append([name,'not a source file'])
-        if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario1-v25_1.json','profiles/scenario2-v24.json','profiles/scenario3-v25_1.json','profiles/scenario2-v25_1-upgrade.json','profiles/scenario2-supplied-v1003.json'}:
+        if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario1-v25_1.json','profiles/scenario2-v24.json','profiles/scenario3-v25_1.json','profiles/scenario2-v25_1-upgrade.json','profiles/scenario2-supplied-v1003.json','profiles/scenario2-v25_1-v1_003.json','profiles/scenario2-v25_1-v2_000.json','profiles/scenario3-v25_1-redump.json','profiles/scenario1-v25_1-addons.json','profiles/scenario2-v25_1-addons-v1_003.json','profiles/scenario2-v25_1-addons-v2_000.json','profiles/scenario3-v25_1-addons-redump.json'}:
             failures.append([name,'unreviewed generation profile'])
         if path.parts[0] == 'desktop' and name not in {'desktop/dependencies.json','desktop/posix-dependencies.json'} and path.suffix not in {'.py','.cs'}:
             failures.append([name,'not desktop application source'])

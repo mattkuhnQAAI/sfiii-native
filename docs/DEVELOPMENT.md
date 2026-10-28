@@ -81,3 +81,40 @@ The runtime patch must be reproducible against the exact commit in `dependencies
 Measure visible play separately from `SF3_GPU_OFFSCREEN`: the diagnostic path reads the GPU picture back every field and synchronizes work that visible play can overlap. Its fields-per-second result is not an on-screen FPS estimate. Report Saturn fields, distinct rendered pictures, audio underruns and the tested interval separately; a game can run at 60 fields/sec while changing its picture roughly 30 times/sec.
 
 The AI renderer retains a bounded 64 MiB working set of recent replacement materials, reuses identical packed overlay inputs, and uses the native decoder's texture fingerprint only as a lookup hint. Dimensions and complete original pixel bytes still determine whether a replacement matches. Tests cover stale fingerprints, working-set limits, empty/populated transitions and sprites with different command types. Geometry uploads share a reusable cycling transfer buffer; queued-frame tests check growth and in-flight data isolation. `SF3_AI_GPU_CACHE_DISABLE=1` permits an external diagnostic comparison with overlay/residency reuse disabled. Native saves, scene execution and game timing are independent of these presentation caches.
+
+
+## V25.1 + V25+ add-on profiles
+
+Four profiles register the Translation Project V25.1 discs patched with the V25+ add-ons and the **default add-on selection**: every V25+ add-on is applied, the five base patches that newer add-ons replace are dropped (Blacksmith Interface Update v3.1, Blacksmith Results v2.1, Critical and Counter Fix v1.11, Irene Insane Buff 1.02 and Rogan Sprite Fix v5 are superseded by their newer versions), and *Magic Resistance Icons v2* stays off. Any other selection gives a different `content_sha256` and is refused as an unregistered revision.
+
+| Profile file | Profile id | Base disc | `content_sha256` | Seeds copied from |
+|---|---|---|---|---|
+| `scenario1-v25_1-addons.json` | `scenario1-translation-v25_1-addons` | Scenario 1 USA MK-81383 V1.001 | `64d62cfb…ff71` | `scenario1-v25_1.json` |
+| `scenario2-v25_1-addons-v1_003.json` | `scenario2-translation-v25_1-addons-v1_003` | Scenario 2 GS-9188 V1.003 | `6e702ff5…70a0` | `scenario2-v25_1-v1_003.json` |
+| `scenario2-v25_1-addons-v2_000.json` | `scenario2-translation-v25_1-addons-v2_000` | Scenario 2 GS-9188 V2.000 (Rev A) | `e2dd53f6…e1db` | `scenario2-v25_1-v2_000.json` |
+| `scenario3-v25_1-addons-redump.json` | `scenario3-translation-v25_1-addons-redump` | Scenario 3 GS-9203 V1.001 (Redump) | `1b4d7442…bae8` | `scenario3-v25_1-redump.json` |
+
+The add-ons change code files, not only text and graphics:
+
+- Scenario 1: `X002`, `X013`, `X014`, `X017`, `X1MY_RM`, `X1MY_RM2`, `X1RINOIN`;
+- Scenario 2 (both bases): `X017`, `X1SO_2FA`, `X1STIN`, `X1S_RM51`, `X5STOIN`;
+- Scenario 3: `1ST.BIN` (BOOT), `X007`, `X013`, `X014`, `X017` (27032 to 28672 bytes), `X027` (32008 to 24948 bytes).
+
+The root directory order (file IDs), the bytes at every seed and BOOT stack-return site (64 bytes each) and the bytes at every evidence address are the same as on the matching V25.1 disc. The V25.1 profiles were therefore copied with only `id`, `title`, `version`, `content_sha256` and `support` changed; `tools/tests/test_addon_profiles.py` keeps every other field equal to the base profile. The changed `X014`/`X017` code at `06088000` is found by the module audit, as on V25.1.
+
+Results on Linux x86-64 (Debian 13, clang 19, headless, software rendering), with `SF3_DISPATCH_AUDIT=1`:
+
+| Profile | Modules | Emission check | Review items | 4500-VBlank boot |
+|---|---|---|---|---|
+| Scenario 1 add-ons | 252 | 16574 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Scenario 2 add-ons, V2.000 | 285 | 20954 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Scenario 2 add-ons, V1.003 | 285 | 20962 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Scenario 3 add-ons | 273 | 25233 entries, 0 missing | X004 (as V25.1) | clean |
+
+Each gameplay route was run on the add-on disc and, with the same inputs, on the V25.1 disc:
+
+- Chapter 1 field and battle start from a saved game on all four discs, plus nine field-menu and scene-transfer routes. No fatal message, unresolved call or dispatch-audit report. Without the add-on profiles these discs fail on V25.1 builds: Scenario 3 does not boot, and Scenario 1 and Scenario 2 V1.003 stop at calls into the moved `X002`/`X017` code.
+- Blocks hit per run match the V25.1 run exactly in 10 of 13 runs. The three differences are all in add-on code (Scenario 1 battle start `X014` +13 blocks; Scenario 2 V1.003 and V2.000 menu route `X017` -5). Every block hit in only one of the two runs is in a function whose bytes differ between the discs.
+- A short automated-input soak, 5 saved games per disc at 36000 frames each: 20 of 20 clean, with no fatal, stall, freeze or unimplemented-feature report.
+
+Not validated yet: full playthroughs, endings, and saves written on an add-on disc being read on a V25.1 disc (or the reverse).

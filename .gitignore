@@ -32,7 +32,14 @@
 !/profiles/scenario2-v24.json
 !/profiles/scenario2-v25_1-upgrade.json
 !/profiles/scenario2-supplied-v1003.json
+!/profiles/scenario2-v25_1-v1_003.json
+!/profiles/scenario2-v25_1-v2_000.json
 !/profiles/scenario3-v25_1.json
+!/profiles/scenario3-v25_1-redump.json
+!/profiles/scenario1-v25_1-addons.json
+!/profiles/scenario2-v25_1-addons-v1_003.json
+!/profiles/scenario2-v25_1-addons-v2_000.json
+!/profiles/scenario3-v25_1-addons-redump.json
 !/tools/
 /tools/*
 !/tools/audit-modules.py

@@ -1,0 +1,369 @@
+{
+  "product": "SF3TRANS",
+  "version": "V25.1+V25+",
+  "modules": [
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06046000",
+      "seeds": [
+        "06046000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "BOOT",
+      "file": "1ST.BIN",
+      "base": "06004000",
+      "seeds": [
+        "06004000",
+        "060108F8",
+        "0601F76C",
+        "06014888",
+        "0601366C",
+        "06015CAC",
+        "060149A0",
+        "06011368",
+        "060113A4",
+        "0600B610",
+        "06011D1C",
+        "0600B770",
+        "060091E4",
+        "06015CC0",
+        "060173D4",
+        "060173C8",
+        "0600BA78",
+        "0600B2C8",
+        "06008D68",
+        "060085D0",
+        "06008558",
+        "060086C0",
+        "060087BC",
+        "06017754",
+        "06017768",
+        "0601F870",
+        "06014284",
+        "0601F85A",
+        "0600B410",
+        "0600B400",
+        "0600E852",
+        "0600BCA0",
+        "0600BEC4",
+        "06008D28",
+        "0600BEE4",
+        "0600BF04",
+        "0600BE24",
+        "0600BE10",
+        "0600BDF8",
+        "060087EC",
+        "0600881C",
+        "06008844",
+        "060083FA",
+        "06011B68",
+        "0600BE30",
+        "0600B3F0",
+        "0601F874",
+        "0601F876",
+        "0600B754",
+        "0600E2C0",
+        "06008D88",
+        "0600BD68",
+        "0601F856"
+      ],
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate.",
+      "stack_return_calls": [
+        "06004040",
+        "06004108",
+        "06004204"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
+    },
+    {
+      "name": "X002",
+      "file": "X002.BIN",
+      "base": "06028800",
+      "seeds": [
+        "06028800",
+        "06028878",
+        "060289B0"
+      ],
+      "overlay": true,
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
+    },
+    {
+      "name": "X033",
+      "file": "X033.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
+    },
+    {
+      "name": "X003",
+      "file": "X003.BIN",
+      "base": "06034B00",
+      "seeds": [
+        "06034B00",
+        "06034B0C",
+        "06034C74",
+        "06035000"
+      ],
+      "overlay": true,
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
+    },
+    {
+      "name": "X001",
+      "file": "X001.BIN",
+      "base": "060FD000",
+      "seeds": [
+        "060FD000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X032",
+      "file": "X032.BIN",
+      "base": "06088000",
+      "bytes": "8200",
+      "seeds": [
+        "06088000",
+        "06088084",
+        "060880A8",
+        "060880CC"
+      ],
+      "overlay": true,
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
+    },
+    {
+      "name": "X008",
+      "file": "X008.BIN",
+      "base": "06056000",
+      "seeds": [
+        "06056000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X005",
+      "file": "X005.BIN",
+      "base": "0603DC00",
+      "seeds": [
+        "0603DD8C"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X006",
+      "file": "X006.BIN",
+      "base": "06046000",
+      "seeds": [
+        "06046000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1OPMOV",
+      "file": "X1OPMOV.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X009",
+      "file": "X009.BIN",
+      "base": "06035000",
+      "seeds": [
+        "06035000"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1DREAM",
+      "file": "X1DREAM.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06060A24"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X022",
+      "file": "X022.BIN",
+      "base": "06070000",
+      "seeds": [
+        "0607000C",
+        "06074ED8"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X021",
+      "file": "X021.BIN",
+      "base": "06068000",
+      "seeds": [
+        "06068090"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1OP101",
+      "file": "X1OP101.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F4B8"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1OP102",
+      "file": "X1OP102.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06060068"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1OP103",
+      "file": "X1OP103.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06061244"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X1SARA1",
+      "file": "X1SARA1.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F9FC"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X017",
+      "file": "X017.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088000",
+        "06088264"
+      ],
+      "overlay": true,
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
+    },
+    {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06056000",
+      "seeds": [
+        "06056000",
+        "0605600C",
+        "06056018",
+        "06056024",
+        "06056030",
+        "0605603C",
+        "06056048",
+        "06056054",
+        "06056060",
+        "0605606C",
+        "06056078",
+        "06056084",
+        "06056090",
+        "0605609C",
+        "060560A8",
+        "060560B4",
+        "060560C0",
+        "060560CC",
+        "060560D8",
+        "060560F0"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D800",
+        "0609D80C",
+        "0609D818",
+        "0609D824",
+        "0609D830",
+        "0609D83C",
+        "0609D848",
+        "0609D854",
+        "0609D860"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100",
+        "060C010C",
+        "060C0118",
+        "060C0124"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    },
+    {
+      "name": "X3HEAL",
+      "file": "X3HEAL.BIN",
+      "base": "0604A800",
+      "seeds": [
+        "0604A800",
+        "0604A80C",
+        "0604A818"
+      ],
+      "overlay": true,
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
+    }
+  ],
+  "id": "scenario1-translation-v25_1-addons",
+  "title": "Scenario 1 (Translation Project v25.1 + V25+ add-ons)",
+  "scenario": 1,
+  "scene_base": "0605F000",
+  "content_sha256": "64d62cfbd5756944f5349d1e7f727ff51a74e4e364e786d1cfb6cde4a2f5ff71",
+  "support": "Experimental; base disc patched with the Translation Project V25.1 default selection plus the V25+ add-ons (every V25+ add-on, the five base patches they supersede dropped, Magic Resistance Icons v2 off; see docs/DEVELOPMENT.md). Seeds and stack-return sites copied from scenario1-translation-v25_1; their bytes are unchanged in the add-on code files. Module audit, emission check, boot, field, menu and battle-start routes and a short soak checked headless on Linux; full campaign unvalidated.",
+  "inherited_entry_review": [
+    {
+      "module": "X032",
+      "old_seed": "0608DACC",
+      "status": "unaligned; not copied by absolute address"
+    }
+  ]
+}

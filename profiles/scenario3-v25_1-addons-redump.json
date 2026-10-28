@@ -1,0 +1,445 @@
+{
+  "id": "scenario3-translation-v25_1-addons-redump",
+  "title": "Scenario 3 (Translation Project V25.1 + V25+ add-ons, Redump base)",
+  "scenario": 3,
+  "product": "SF3TRANS",
+  "version": "V25.1+V25+",
+  "content_sha256": "1b4d7442304cba8aad70e98d5d3188b0a404e4f81748689fc3df081e3b96bae8",
+  "scene_base": "0605E000",
+  "effect_base": null,
+  "module_containers": [
+    {
+      "file": "EFFECT.BIN",
+      "prefix": "EFFECT_",
+      "base": "06048D00",
+      "chunk_bytes": "8000",
+      "count": 69,
+      "entry_offsets": [
+        0,
+        12,
+        24
+      ],
+      "evidence": "Verified v25.1 X014 loader 060896BC gets an effect index from 06098F28, multiplies it by 0x8000, and calls BOOT 060124DC with file ID 0xBF (EFFECT.BIN), destination 06048D00, source byte offset index*0x8000 and length 0x8000. The update path calls 06048D00 at 0608B114. Disc container is exactly 69 chunks; all three header veneers in each chunk point inside the loaded chunk. Static loader mapping; individual effects still require gameplay validation."
+    }
+  ],
+  "model_bases": {
+    "X011": "06068000",
+    "X012": "06070000",
+    "X013": "06080000",
+    "X014": "06088000",
+    "X016": "06088000",
+    "X017": "06088000",
+    "X018": "06088000",
+    "X023": "06078000",
+    "X026": "06078000",
+    "X027": "06078000",
+    "X032": "06088000",
+    "X033": "06078000",
+    "X035": "06088000",
+    "X044": "06078000",
+    "X002": "0602A000",
+    "X005": "0603C900",
+    "X031": "0604C800",
+    "X024": "0028C000",
+    "X021": "06068000"
+  },
+  "modules": [
+    {
+      "name": "X025",
+      "file": "X025.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X1ASPI_H at 0605E0DC passes destination 06078000 in r5 and file ID 0x1DA in r4 to BOOT 060124BC, waits via 060120D8, then calls 06078000 at 0605E0EC. Multiple church scene programs repeat this pattern. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X048",
+      "file": "X048.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X013 at 06080B9E passes destination 06048D00 in r5 and file ID 0x1E5 in r4 to BOOT 060124BC, waits via 060120D8, then calls 06048D00 at 06080BB2. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X1ENDING at 0605F366 passes destination 06048D00 in r5 and file ID 0x1E6 in r4 to BOOT 060124F4; the loaded entry is called at 0605F3A6. References to ID 0x1E6 in X1BTL306 use a different resource API and are not this loader. Static loader/call evidence; ending gameplay unexecuted."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06040000",
+      "seeds": [
+        "06040000"
+      ],
+      "overlay": true,
+      "evidence": "Verified v25.1 X001 at 060F640A loads file ID 0x1E4 (disc directory X046.BIN) into r5=06040000, waits for completion, then calls 06040000 at 060F6420. Static loader/call evidence; this route has not been executed."
+    },
+    {
+      "name": "BOOT",
+      "file": "1ST.BIN",
+      "base": "06004000",
+      "seeds": [
+        "06004000",
+        "06009906",
+        "06009A64",
+        "06009ADC",
+        "06009BCC",
+        "06009CC8",
+        "06009CF8",
+        "0600A234",
+        "0600A274",
+        "0600A294",
+        "0600A6F0",
+        "0600C7D4",
+        "0600C8FC",
+        "0600C90C",
+        "0600C91C",
+        "0600CB1C",
+        "0600CC60",
+        "0600CD5C",
+        "0600CF84",
+        "0600D04C",
+        "0600D108",
+        "0600D114",
+        "0600D1A8",
+        "0600D1C8",
+        "0600D1E8",
+        "0600E160",
+        "0600E6F2",
+        "0601032C",
+        "06010370",
+        "06012FF8",
+        "06014354",
+        "060146F4",
+        "0601568A",
+        "060170F0",
+        "06017104",
+        "06020C6C"
+      ],
+      "evidence": "IP first-read address. Additional seeds uniquely match 64 bytes of registered Scenario 2 boot callbacks; static candidates, not executed coverage. Observed entry 0601032C: 64 target bytes exactly match the mapped image. Observed entry 060146F4: 64 target bytes exactly match the mapped image. Observed entry 060170F0: 64 target bytes exactly match the mapped image. Observed entry 06017104: 64 target bytes exactly match the mapped image. Observed entry 0600D1C8: 64 target bytes exactly match the mapped image. Observed entry 0600D1E8: 64 target bytes exactly match the mapped image.",
+      "stack_return_calls": [
+        "06005548",
+        "06005610",
+        "0600570C"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
+    },
+    {
+      "name": "X003",
+      "file": "X003.BIN",
+      "base": "06036800",
+      "seeds": [
+        "06036974"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 4096-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 06036974: unique 4096-byte prefix and 64 target bytes exactly match captured RAM."
+    },
+    {
+      "name": "X001",
+      "file": "X001.BIN",
+      "base": "060F6000",
+      "seeds": [
+        "060F6000"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 1768-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 060F6000: unique 1768-byte prefix and 64 target bytes exactly match captured RAM."
+    },
+    {
+      "name": "X032",
+      "file": "X032.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088084"
+      ],
+      "overlay": true,
+      "evidence": "Native call to 06088084. Crash RAM independently matches the first 0x8200 bytes exactly; bytes from 0x8200 through 0x875B are mutable and excluded from identity.",
+      "bytes": "8200"
+    },
+    {
+      "name": "X006",
+      "file": "X006.BIN",
+      "base": "06043D00",
+      "seeds": [
+        "06043D00",
+        "06044550"
+      ],
+      "overlay": true,
+      "evidence": "Entire 18856-byte image uniquely matches captured RAM at 06043D00 during boot. Loaded mapping verified; entry execution remains to be tested. 06044550 is a second entry: Sc3 map 0xA8 (scene X1RYUTA, 060602C0) calls it; Beetle Saturn with a real BIOS has these same X006 bytes at 06044550 and plays the map."
+    },
+    {
+      "name": "X008",
+      "file": "X008.BIN",
+      "base": "06054500",
+      "seeds": [
+        "06054500"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 4096-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 06054500: unique 4096-byte prefix and 64 target bytes exactly match captured RAM."
+    },
+    {
+      "name": "X009",
+      "file": "X009.BIN",
+      "base": "06037000",
+      "seeds": [
+        "06037000"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes. X002 calls 06037000 after loading X009 over the interior of X003."
+    },
+    {
+      "name": "X013",
+      "file": "X013.BIN",
+      "base": "06080000",
+      "seeds": [
+        "06080000",
+        "0608000C",
+        "06080018",
+        "06080024",
+        "06080030",
+        "0608003C",
+        "06080048",
+        "06080054",
+        "06080060",
+        "0608006C",
+        "06080078",
+        "06080084"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X017",
+      "file": "X017.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088000",
+        "0608800C",
+        "06088018",
+        "06088024",
+        "06088030",
+        "0608803C",
+        "06088048",
+        "06088054"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X021",
+      "file": "X021.BIN",
+      "base": "06068000",
+      "seeds": [
+        "06068060",
+        "0606806C",
+        "06068078",
+        "06068084",
+        "06068090",
+        "0606809C",
+        "060680A8",
+        "060680B4",
+        "060680C0",
+        "060680CC",
+        "060680D8"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X022",
+      "file": "X022.BIN",
+      "base": "06070000",
+      "seeds": [
+        "06070000",
+        "0607000C",
+        "06070018",
+        "06070024",
+        "06070030",
+        "0607003C",
+        "06070048",
+        "06070054",
+        "06070060",
+        "0607006C",
+        "06070078",
+        "06070084",
+        "06070090",
+        "0607009C",
+        "060700A8",
+        "060700B4",
+        "060700C0",
+        "060700CC",
+        "060700D8",
+        "060700E4",
+        "060700F0",
+        "060700FC",
+        "06070108",
+        "06070114",
+        "06070120",
+        "0607012C",
+        "06070138",
+        "06070144",
+        "06070150",
+        "0607015C",
+        "06070168",
+        "06070174",
+        "06070180",
+        "0607018C",
+        "06070198",
+        "060701A4",
+        "060701B0",
+        "060701BC",
+        "060701C8",
+        "060701D4",
+        "060701E0",
+        "060701EC",
+        "060701F8",
+        "06070204",
+        "06070210",
+        "0607021C",
+        "06070228",
+        "06070234",
+        "06070240",
+        "0607024C",
+        "06070258",
+        "06070264",
+        "06070270",
+        "0607027C",
+        "06070288",
+        "06070294",
+        "060702A0",
+        "060702AC",
+        "060702B8",
+        "060702C4",
+        "060702D0",
+        "060702DC",
+        "060702E8",
+        "060702F4",
+        "06070300",
+        "0607030C",
+        "06070318",
+        "06070324",
+        "06070330",
+        "0607033C",
+        "06070348",
+        "06070354",
+        "06070360",
+        "0607036C",
+        "06070378",
+        "06070384",
+        "06070390",
+        "0607039C",
+        "060703A8",
+        "060703B4",
+        "060703C0",
+        "060703CC",
+        "060703D8",
+        "060703E4",
+        "060703F0",
+        "060703FC",
+        "06070408",
+        "06070414",
+        "06070420",
+        "0607042C",
+        "06070438",
+        "06070444",
+        "06070450",
+        "0607045C",
+        "06070468",
+        "06070474",
+        "06070480",
+        "0607048C",
+        "06070498",
+        "060704A4",
+        "060704B0",
+        "060704BC",
+        "060704C8",
+        "060704D4",
+        "060704E0",
+        "060704EC",
+        "060704F8"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X033",
+      "file": "X033.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000",
+        "0607800C",
+        "06078018",
+        "06078024",
+        "06078030",
+        "0607803C",
+        "06078048"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100",
+        "060C010C",
+        "060C0118",
+        "060C0124"
+      ],
+      "overlay": true,
+      "evidence": "Entire image uniquely matches boot-pass-08 WRAM-H; in-image export veneers identify static entry candidates. Loaded mapping verified; execution remains limited to recorded routes."
+    },
+    {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06054500",
+      "seeds": [
+        "06054500"
+      ],
+      "overlay": true,
+      "evidence": "unique file prefix and 64 entry bytes match captured RAM Observed entry after leaving the ship: 06054500, unique file prefix and 64 entry bytes match captured RAM."
+    },
+    {
+      "name": "X019",
+      "file": "X019.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A000C"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 4096-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 060A000C: unique 4096-byte prefix and 64 target bytes exactly match captured RAM."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D848"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 4096-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 0609D848: unique 4096-byte prefix and 64 target bytes exactly match captured RAM."
+    },
+    {
+      "name": "X045",
+      "file": "X045.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Native boot: unique 4096-byte prefix and 64 target bytes exactly match captured RAM. Executed coverage limited to local route. Observed entry 060A0000: unique 4096-byte prefix and 64 target bytes exactly match captured RAM."
+    }
+  ],
+  "support": "Experimental; base disc patched with the Translation Project V25.1 default selection plus the V25+ add-ons (every V25+ add-on, the five base patches they supersede dropped, Magic Resistance Icons v2 off; see docs/DEVELOPMENT.md). Seeds and stack-return sites copied from scenario3-translation-v25_1-redump; their bytes are unchanged in the add-on code files. Module audit, emission check, boot, field, menu and battle-start routes and a short soak checked headless on Linux; full campaign unvalidated.",
+  "boot_check_vblanks": 3000
+}
