@@ -13,12 +13,17 @@ int main() {
     check(q.drained(0) && !q.playing);
     check(!q.drained(0) && !q.ready(2205));
     check(q.ready(4500));
+    check(q.drained(0) && q.target_lead==q.recovery_lead && q.underruns==2);
+    check(!q.ready(q.recovery_lead-1) && q.ready(q.recovery_lead));
+    check(q.drained(0) && q.target_lead==q.recovery_lead && q.underruns==3);
+    check(q.ready(q.recovery_lead) && q.drained(0) && q.underruns==3);
+    q.reset(1);check(q.target_lead==q.lead && q.underruns==0);
     check(q.fits(10000, 1025) && !q.fits(10000, 1026));
     check(!q.fits(-1, 1) && !q.fits(0, 0) && !q.fits(0, 11026));
     check(!q.fits(INT_MAX,1) && !q.fits(INT_MIN,1) && !q.fits(0,INT_MAX));
     check(q.fits(0,q.maximum) && q.fits(q.maximum-1,1) && !q.fits(q.maximum,1));
     for(int cycle=0;cycle<1000;++cycle) {
-        q.playing=false;int queued=0;
+        q.reset(1);int queued=0;
         const int chunk=cycle%3==0 ? 128 : cycle%3==1 ? 512 : 1024;
         while(queued<q.lead) {
             check(!q.ready(queued));check(q.fits(queued,chunk));queued+=chunk;
@@ -35,6 +40,9 @@ int main() {
         check(!q.ready(q.lead*after-1));check(q.ready(q.lead*after));
         check(q.fits(q.maximum*after-1,1) && !q.fits(q.maximum*after,1));
         check(q.drained(0) && !q.ready(0));
+        check(q.ready(q.lead*after) && q.drained(0));
+        check(!q.ready(q.recovery_lead*after-1) && q.ready(q.recovery_lead*after));
+        q.reset(after);check(q.target_lead==q.lead && q.underruns==0);
     }
     std::puts("PASS: startup priming, refill, stable playback, bounded queue");
 }

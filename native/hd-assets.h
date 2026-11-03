@@ -100,6 +100,18 @@ class HdAssets {
     }
 public:
     explicit HdAssets(size_t budget=256*1024*1024):replacement_budget_(budget) {}
+    // Each artwork style has an independent, demand-filled CPU cache. Keep a
+    // conservative fallback when host memory is unavailable or limited.
+    static size_t recommended_cache_bytes(int system_ram_mb) {
+        if(system_ram_mb>=24*1024)return size_t(1024)*1024*1024;
+        if(system_ram_mb>=16*1024)return size_t(512)*1024*1024;
+        return size_t(256)*1024*1024;
+    }
+    bool configure_cache_budget(size_t bytes) {
+        if(replacement_bytes_ || !bytes)return false;
+        replacement_budget_=bytes;return true;
+    }
+    size_t cache_budget() const {return replacement_budget_;}
     size_t load(const std::string& root) {
         assets_.clear();buckets_.clear();cache_valid_=false;std::error_code error;
         loaded_.clear();replacement_bytes_=0;replacement_epoch_=0;

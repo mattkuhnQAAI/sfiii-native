@@ -3,6 +3,11 @@
 #include "overlay-error.h"
 
 int main(int argc,char** argv) {
+    if(sf3::HdAssets::recommended_cache_bytes(-1)!=size_t(256)*1024*1024 ||
+       sf3::HdAssets::recommended_cache_bytes(16383)!=size_t(256)*1024*1024 ||
+       sf3::HdAssets::recommended_cache_bytes(16384)!=size_t(512)*1024*1024 ||
+       sf3::HdAssets::recommended_cache_bytes(24575)!=size_t(512)*1024*1024 ||
+       sf3::HdAssets::recommended_cache_bytes(24576)!=size_t(1024)*1024*1024)return 31;
     if(overlay_error(0x00FFFFFF,0)!=0 || overlay_error(0x01897821,0)!=1
        || overlay_error(0xFF030000,0xFF000000)!=3
        || overlay_error(0x03000000,0)!=3
@@ -97,6 +102,13 @@ int main(int argc,char** argv) {
         output.px.assign(64,0);frames.apply(source,output);
         if(output.px[0]!=uint32_t(100+frame)<<8 || frames.cached_replacement_bytes()!=64)return 26;
     }
+    sf3::HdAssets warm(64);if(!warm.configure_cache_budget(192) || warm.cache_budget()!=192 || warm.configure_cache_budget(0) || warm.load(animation.string())!=3)return 32;
+    for(int frame:{0,1,2,0,2,1}) {
+        t->rgba[0]=0xFF000000|uint32_t(248-frame*8)<<16;++source.hd->geometry;
+        output.px.assign(64,0);warm.apply(source,output);
+        if(output.px[0]!=uint32_t(100+frame)<<8 || warm.cached_replacement_bytes()>192)return 33;
+    }
+    if(warm.cached_replacement_bytes()!=192 || warm.configure_cache_budget(64))return 34;
     t->rgba[0]^=1;++source.hd->geometry;frames.apply(source,output);if(frames.last_pixels())return 27;
     std::puts("PASS: replacement detail, exact original match, native occlusion mask, source immutability, colour calculation, Gouraud, offset/shadow, damaged pack rejection");
 }

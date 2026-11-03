@@ -14,6 +14,8 @@
 
 The v0.6.0 Linux/macOS candidates have not been added to the release downloads; the linked v0.5.0-alpha packages remain the published baseline. Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
 
+**Changes in source since the published preview:** faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion after repeated underruns. These changes were tested on selected Windows Scenario 2 routes, including a volcano replay and native-state continuations. They are not yet included in the published downloads; full campaigns and other platforms remain unvalidated. The audio cushion starts at 100 ms and increases to 150 ms after repeated underruns, trading additional latency for fewer interruptions.
+
 ### Registered game editions
 
 | Game | Accepted disc revision | Current gameplay coverage |

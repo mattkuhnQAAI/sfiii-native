@@ -225,6 +225,7 @@ int main(int argc, char** argv) {
         "empty after populated","all after empty","character normal sprites","character scaled sprites","unsupported command"};
     gpu.release();
     if(!gpu.initialize(renderer,assets,shader_dir)) {std::fprintf(stderr,"GPU material reinitialization: %s\n",SDL_GetError());return 4;}
+    uint64_t append_before=0,words_before=0;
     for(int test=0;test<9 && frame.hd;++test) {
         if(test==1 && !single_owner) {std::printf("GPU residency: one-material fixture unavailable\n");continue;}
         Frame variant=frame;variant.hd=std::make_shared<HdScene>(*frame.hd);variant.hd->geometry+=1000+test;
@@ -232,6 +233,7 @@ int main(int argc, char** argv) {
         if(test==1)for(auto& owner:variant.hd->visible)if(owner!=single_owner)owner=0;
         if(test>=6)for(auto& quad:variant.hd->quads)
             quad.gpu_flags=(quad.gpu_flags&~(15u<<16))|(uint32_t(test==6?0:test==7?1:3)<<16);
+        if(test==2){append_before=gpu.art_appends();words_before=gpu.art_words_uploaded();}
         auto* result=gpu.render(variant,assets);
         if(!result || !SDL_SetRenderTarget(renderer,result))return 10;
         auto* surface=SDL_RenderReadPixels(renderer,nullptr);if(!surface)return 11;
@@ -249,12 +251,47 @@ int main(int argc, char** argv) {
         std::printf("GPU material variant %d (%s): %zu replacement pixels; %zu pixels exceed 2/255, maximum %d\n",
             test,variant_names[test],replacement_pixels,errors,maximum_error);
         if(errors)return 13;
+        if(test==2 && gpu.art_appends()>append_before) {
+            if(gpu.art_words_uploaded()<=words_before)return 23;
+            std::printf("GPU residency appended new materials without replacing existing offsets\n");
+        }
         if((test==0 || test==4 || test==8) && replacement_pixels)return 19;
         if(require_replacements && test>=1 && test<=5 && test!=4 && !replacement_pixels)return 17;
         if(require_characters && (test==6 || test==7) && !replacement_pixels) {
             std::fprintf(stderr,"Character replacement fixture unavailable for command %d\n",test==6?0:1);return 20;
         }
     }
+    // Submit changing scenes without an intervening readback. Each copy must
+    // retain its own staging contents while subsequent frames cycle the buffer.
+    std::vector<SDL_Texture*> queued;
+    std::vector<Frame> references;
+    for(int i=0;i<3 && frame.hd;++i) {
+        Frame variant=frame;variant.hd=std::make_shared<HdScene>(*frame.hd);
+        variant.hd->geometry+=2000+i;
+        for(auto& q:variant.hd->quads) {
+            q.hflip=(i&1)!=0;
+            for(auto& shade:q.shade)shade=float(i*5-5);
+        }
+        auto* result=gpu.render(variant,assets);if(!result)return 24;
+        auto* copy=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,1440,1080);
+        if(!copy || !SDL_SetRenderTarget(renderer,copy))return 24;
+        SDL_SetTextureBlendMode(result,SDL_BLENDMODE_NONE);
+        if(!SDL_RenderTexture(renderer,result,nullptr,nullptr) || !SDL_FlushRenderer(renderer))return 24;
+        SDL_SetTextureBlendMode(result,SDL_BLENDMODE_BLEND);
+        SDL_SetRenderTarget(renderer,scratch);queued.push_back(copy);references.push_back(assets.overlay(variant));
+    }
+    for(size_t i=0;i<queued.size();++i) {
+        if(!SDL_SetRenderTarget(renderer,queued[i]))return 24;
+        auto* image=SDL_RenderReadPixels(renderer,nullptr);if(!image)return 24;
+        auto* rgba=SDL_ConvertSurface(image,SDL_PIXELFORMAT_ARGB8888);if(!rgba)return 24;
+        for(int y=0;y<1080;++y)for(int x=0;x<1440;++x) {
+            auto got=((uint32_t*)((uint8_t*)rgba->pixels+y*rgba->pitch))[x];
+            auto want=references[i].px[size_t(y)*1440+x];
+            if(overlay_error(got,want)>2){std::fprintf(stderr,"Queued AI frame %zu differs at %d,%d: %08X vs %08X\n",i,x,y,got,want);return 25;}
+        }
+        SDL_DestroySurface(rgba);SDL_DestroySurface(image);SDL_SetRenderTarget(renderer,scratch);SDL_DestroyTexture(queued[i]);
+    }
+    std::printf("GPU queued AI scenes: %zu delayed readbacks preserve staging contents\n",queued.size());
     if(frame.px!=initial_pixels || guest_video()!=initial_guest_video) {
         std::fprintf(stderr,"Replacement rendering changed native pixels or guest video memory\n");return 21;
     }

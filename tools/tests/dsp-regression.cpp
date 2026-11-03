@@ -60,7 +60,7 @@ static void proactive_cases() {
             ++cases;
         }
     }
-    for(int bank=0;bank<4;++bank) for(bool hold : {false,true}) for(unsigned count : {1u,2u,8u,64u}) {
+    for(int bank=0;bank<4;++bank) for(bool hold : {false,true}) for(unsigned count : {1u,2u,3u,8u,63u,64u}) {
         for(unsigned i=0;i<count;++i) st32(0x06000400+4*i,0x12340000+i);
         g={};g.ra0=0x06000400/4;g.ct[bank]=62;
         g.prog[0]=0xC0010000u|(hold ? 0x4000 : 0)|(bank<<8)|count;

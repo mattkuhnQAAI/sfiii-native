@@ -141,6 +141,25 @@ int main() {
     uint8_t actual[16]={2,4,6,8,10,12,14,16};sh2_mem_write(0x06044800,actual,16);
     bool exact=true;
     check(sh2_identify_containing(0x06044800,&exact)==nullptr && !exact,"unique entry in an unrecognized image must not activate unrelated compiled code");
+    // Same-base alternatives retain table order, complete-image identity, and
+    // freshly read memory on every search, even after an earlier miss.
+    uint8_t original[80];for(unsigned j=0;j<80;++j)original[j]=uint8_t(1+j);
+    modules[13].crc=sh2_crc32(alternate,80);
+    sh2_mem_write(modules[1].base,alternate,80);exact=false;
+    check(sh2_identify_containing(modules[1].base+8,&exact)==&modules[13] && exact,"later same-base image must be identified");
+    sh2_mem_write(modules[1].base,original,80);exact=false;
+    check(sh2_identify_containing(modules[1].base+8,&exact)==&modules[1] && exact,"memory replacement must invalidate prior search result");
+    sh2_mem_write(modules[1].base+79,&unrecognized,1);exact=true;
+    check(!sh2_identify_containing(modules[1].base+8,&exact) && !exact,"unknown full-image identity must remain unresolved");
+    sh2_mem_write(modules[1].base,alternate,80);exact=false;
+    check(sh2_identify_containing(modules[1].base+8,&exact)==&modules[13] && exact,"previous miss must not be cached across calls");
+    // A shorter, earlier matching image wins base identification even when it
+    // does not contain the requested address; do not select a later image.
+    auto saved_first=modules[1];auto saved_second=modules[13];
+    modules[1].size=16;modules[1].crc=sh2_crc32(original,16);
+    modules[13].crc=sh2_crc32(original,80);sh2_mem_write(modules[1].base,original,80);exact=true;
+    check(!sh2_identify_containing(modules[1].base+32,&exact) && !exact,"earlier short matching image must preserve base-identity ordering");
+    modules[1]=saved_first;modules[13]=saved_second;
     for(int bank=0;bank<2;++bank)for(uint32_t alias:{0u,0x20000000u}) {
         int parent=15+bank*2,child=parent+1;
         check(sh2_mem_write(modules[parent].base,parent_image,256),"load partial parent");
