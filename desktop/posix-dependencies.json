@@ -1,5 +1,5 @@
 {
-  "version": "0.6.0-preview1",
+  "version": "0.6.1-preview1",
   "git": {
     "sdl": {
       "url": "https://github.com/libsdl-org/SDL.git",
