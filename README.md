@@ -1,8 +1,20 @@
 # Shining Force III Recomp — Scenarios 1, 2 & 3
 
-**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001**, **Scenario 2 Translation Project v24** and **Scenario 3 Translation Project v25.1**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
+**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for the original USA Scenario 1 and selected translated revisions of Scenarios 1–3. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services.
 
-## Current status — October 24, 2026
+## Latest improvements and highlights
+
+The latest source includes changes made after the published preview:
+
+- **Smoother module transitions:** repeated identification of overlays sharing a loading address is avoided within each search. In one Scenario 2 volcano trace, a lookup fell from about 116 ms to under 2 ms; other stutters remain.
+- **Artwork performance and caching:** incremental GPU uploads reduce repeated work, and the CPU artwork cache grows on PCs with more memory. Artwork is loaded on demand; a larger cache helps only when previously used textures would otherwise be evicted.
+- **Adaptive audio recovery:** playback starts with a 100 ms cushion and increases to 150 ms after repeated underruns. This can reduce interruptions at the cost of up to 50 ms additional audio latency; it cannot correct sustained slow rendering.
+- **Clearer artwork choices:** the source menu and builder use **Animated**, **Illustrated** and **General**, with **Off** in the game. These select artwork styles rather than changing animation speed. Existing packs and saved settings remain compatible.
+- **Gameplay features:** local game preparation, controller setup, save import/export, native quick states, 1×/2×/5× rendering, experimental widescreen and optional locally generated artwork. See [Features](#features) and [Screenshots](#screenshots).
+
+These optimizations are shared runtime code intended for Scenarios 1–3. The latest gameplay and performance checks cover selected Windows Scenario 2 routes; they have **not** been revalidated across the other scenarios or whole campaigns. [See validation details](#status-and-validation).
+
+## Current status — November 2026
 
 **The project is playable in tested Windows routes and remains an experimental preview.** The latest published preview is [**v0.6.0-preview1**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.0-preview1). Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
@@ -14,9 +26,9 @@
 
 The v0.6.0 Linux/macOS candidates have not been added to the release downloads; the linked v0.5.0-alpha packages remain the published baseline. Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
 
-**Changes in source since the published preview:** faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion after repeated underruns. These changes were tested on selected Windows Scenario 2 routes, including a volcano replay and native-state continuations. They are not yet included in the published downloads; full campaigns and other platforms remain unvalidated. The audio cushion starts at 100 ms and increases to 150 ms after repeated underruns, trading additional latency for fewer interruptions.
+The improvements and artwork labels above are **source updates, not yet included in the published downloads**. The current preview uses the earlier artwork names: AnimeVideo v3, x4plus anime and x4plus general, respectively. The screenshots below also retain their original captions.
 
-### Registered game editions
+### Registered game editions in the published preview
 
 | Game | Accepted disc revision | Current gameplay coverage |
 | --- | --- | --- |
@@ -29,7 +41,7 @@ Disc verification checks contents, so a matching filename or translation label a
 
 ### What the latest preview adds
 
-- **Optional local AI artwork:** generate eligible world textures and CHR/CHP character frames from your own discs, then choose **Off / AnimeVideo v3 / x4plus anime / x4plus general**. Menus and HUD retain original artwork. View the [same-frame screenshot comparisons](#screenshots).
+- **Optional local AI artwork:** generate eligible world textures and CHR/CHP character frames from your own discs. Menus and HUD retain original artwork. View the [same-frame screenshot comparisons](#screenshots).
 - **A standalone GPU builder:** generation runs on your own Vulkan GPU, with resumable work and automatic playable-pack assembly. First-run setup downloads verified tools; processing then runs locally without Codex, API keys or paid services. Generated artwork packs are not distributed. See [builder setup](docs/DESKTOP.md#optional-graphics-builder).
 - **Faster pack loading and bounded caches:** startup indexes reduce file scanning, replacement pixels load as needed, and the GPU uploads visible materials. The [measured local result](#status-and-validation) covers artwork initialization rather than total launch time.
 - **Launcher pack controls and simpler resolution choices:** attach optional packs or restore original artwork; the new Windows menu offers **1× / 2× / 5×** rendering. Earlier AA and ray-shadow menu experiments are not offered in this preview.
@@ -79,7 +91,7 @@ When updating, extract into a new application folder and choose your existing sc
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
 - Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
 - Separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware.
-- Optional locally generated artwork: **Off / AnimeVideo v3 / x4plus anime / x4plus general**, with eligible world textures and decoded CHR/CHP character frames. Exact source transparency is retained; unmatched artwork, menus and HUD stay original. Extraction counts do not establish complete character, object or campaign coverage.
+- Optional locally generated artwork: **Off / Animated / Illustrated / General** in the current source, with eligible world textures and decoded CHR/CHP character frames. Exact source transparency is retained; unmatched artwork, menus and HUD stay original. Extraction counts do not establish complete character, object or campaign coverage.
 
 ## Screenshots
 
@@ -87,13 +99,13 @@ Windows examples illustrate development progress; they do not establish Linux/ma
 
 **Optional AI artwork:** the same Scenario 2 translated-v24 gameplay frames rendered through the native GPU paths at 5×, with original artwork followed by the three local AI styles. Characters and world textures use the selected style; HUD and menus retain original artwork. These are native renderer compositions of actual captured gameplay states, with identical camera and framing, rather than image-generation mockups. Contact sheets scale the complete images for comparison.
 
-[![Airo village: Original, AnimeVideo v3, x4plus anime and x4plus general](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)
+[![Airo village: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)
 
-Full-size Airo village: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-original.png) · [AnimeVideo v3](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-video.png) · [x4plus anime](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-anime.png) · [x4plus general](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-general.png).
+Full-size Airo village: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-original.png) · [Animated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-video.png) · [Illustrated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-anime.png) · [General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-general.png).
 
-[![Battle formation: Original, AnimeVideo v3, x4plus anime and x4plus general](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)
+[![Battle formation: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)
 
-Full-size battle: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-original.png) · [AnimeVideo v3](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-video.png) · [x4plus anime](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-anime.png) · [x4plus general](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-general.png).
+Full-size battle: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-original.png) · [Animated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-video.png) · [Illustrated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-anime.png) · [General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-general.png).
 
 The styles can smooth away texture detail or introduce seams. Background-plane replacements and full-campaign artwork validation remain unfinished. **Off** restores original artwork with your selected native rendering resolution.
 

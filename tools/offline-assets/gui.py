@@ -10,6 +10,8 @@ from tkinter import filedialog, messagebox, ttk
 APP=Path(__file__).resolve().parent
 ROOT=APP.parent
 CONFIG=ROOT/'settings.json'
+STYLE_LABELS={'video':'Animated', 'anime':'Illustrated', 'general':'General'}
+STYLE_KEYS={label:key for key,label in STYLE_LABELS.items()}
 
 
 def main():
@@ -43,11 +45,11 @@ def main():
     gpu=tk.StringVar(value=str(settings.get('gpu',0)))
     ttk.Combobox(options,textvariable=gpu,values=['0','1','2','3'],state='readonly',width=4).pack(side='left',padx=(8,20))
     ttk.Label(options,text='Styles').pack(side='left')
-    styles=tk.StringVar(value='All three' if len(settings.get('models',[]))==3 else settings.get('models',['video'])[0])
-    ttk.Combobox(options,textvariable=styles,values=['All three','video','anime','general'],state='readonly',width=14).pack(side='left',padx=8)
+    styles=tk.StringVar(value='All three' if len(settings.get('models',[]))==3 else STYLE_LABELS.get(next(iter(settings.get('models',[])),'video'),'Animated'))
+    ttk.Combobox(options,textvariable=styles,values=['All three',*STYLE_KEYS],state='readonly',width=14).pack(side='left',padx=8)
     extras=tk.BooleanVar(value=True)
     ttk.Checkbutton(frame,text='Include character sprites and battle-model textures; also cache backgrounds',variable=extras).pack(anchor='w')
-    ttk.Label(frame,text='video = AnimeVideo v3; anime = x4plus anime; general = x4plus general.\nKeep All three styles selected to attach finished packs to a game. Menus stay original. Failed or unsupported assets remain original.',wraplength=950).pack(anchor='w',pady=(8,12))
+    ttk.Label(frame,text='Choose Animated, Illustrated or General, or build all three.\nKeep All three styles selected to attach finished packs to a game. Menus stay original. Failed or unsupported assets remain original.',wraplength=950).pack(anchor='w',pady=(8,12))
     buttons=ttk.Frame(frame);buttons.pack(fill='x')
     def persist():
         scenarios=[dict(scenario=n,disc=v.get().strip()) for n,v in paths.items() if v.get().strip()]
@@ -57,7 +59,7 @@ def main():
         folder=Path(output.get()).resolve()
         if any((p/'.git').exists() for p in (folder,*folder.parents)):raise ValueError('Choose an output folder outside a source repository')
         current=dict(scenarios=scenarios,out=str(folder),gpu=int(gpu.get()),
-            models=['video','anime','general'] if styles.get()=='All three' else [styles.get()],
+            models=['video','anime','general'] if styles.get()=='All three' else [STYLE_KEYS[styles.get()]],
             categories=['world','sprites','battle_models','backgrounds'] if extras.get() else ['world'])
         CONFIG.write_text(json.dumps(current,indent=2)+'\n',encoding='utf-8');folder.mkdir(parents=True,exist_ok=True)
         return folder

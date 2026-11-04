@@ -120,6 +120,10 @@ int main(int argc, char** argv) {
     if(visible(M_AA) || visible(M_RAY))return 58;
     if(visible(M_AI_GRAPHICS)!=(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2]))return 69;
     if(!visible(M_AI_GRAPHICS) && g_ai_mode!=0)return 83;
+    if(std::string(choice_name(M_AI_GRAPHICS,0))!="Off" ||
+       std::string(choice_name(M_AI_GRAPHICS,1))!="Animated" ||
+       std::string(choice_name(M_AI_GRAPHICS,2))!="Illustrated" ||
+       std::string(choice_name(M_AI_GRAPHICS,3))!="General")return 84;
     if(visible(M_AI_GRAPHICS)) {
         auto persisted=[&](const char* mode) {
             bool found=false;std::vector<std::string> issues;Settings reloaded;

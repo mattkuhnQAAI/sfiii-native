@@ -192,7 +192,7 @@ index cb6af72..37f0829 100644
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..e3f2747 100644
+index feded39..2b7f1e5 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -42,6 +42,17 @@
@@ -335,7 +335,7 @@ index feded39..e3f2747 100644
 +    else sat_note("Geometry GPU unavailable: %s; CPU reference fallback",SDL_GetError());
 +    if(g_gpu_active) {
 +        const char* paths[]={std::getenv("SF3_AI_VIDEO_DIR"),std::getenv("SF3_AI_ASSET_DIR"),std::getenv("SF3_AI_NATURAL_DIR")};
-+        const char* names[]={"AnimeVideo v3","x4plus anime","x4plus general"};
++        const char* names[]={"Animated","Illustrated","General"};
 +        const size_t artwork_budget=sf3::HdAssets::recommended_cache_bytes(SDL_GetSystemRAM());
 +        for(int i=0;i<3;++i) if(paths[i] && *paths[i]) {
 +            const auto pack_begin=std::chrono::steady_clock::now();
@@ -563,7 +563,7 @@ index feded39..e3f2747 100644
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
 +static const char* kRenderNames[]={"1x","2x","5x"};
 +static int choice_count(MenuId id) { return id==M_AI_GRAPHICS ? (g_ai_ready[2]?4:g_ai_ready[1]?3:2) : id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
-+static const char* choice_name(MenuId id, int i) { return id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"AnimeVideo v3":i==2?"x4plus anime":"x4plus general") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static const char* choice_name(MenuId id, int i) { return id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"Animated":i==2?"Illustrated":"General") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
  static int choice_at(MenuId id) {
 +#ifdef SF3_CONTROLLER_SUPPORT

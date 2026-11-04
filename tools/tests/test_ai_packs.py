@@ -120,7 +120,7 @@ class ArtworkSelectionTests(unittest.TestCase):
         record['profile'] = self.profile['id']
         del record['models']['anime']
         self.write(self.game / packs.SELECTION, record)
-        with self.assertRaisesRegex(ValueError, 'all three'):
+        with self.assertRaisesRegex(ValueError, 'Animated, Illustrated and General'):
             packs.validate_selection(self.game, self.profiles)
 
     def test_legacy_preparation_without_verified_profile_must_be_reprepared(self):

@@ -94,7 +94,7 @@ def validate_record(record, profile):
         raise ValueError('Selected artwork belongs to another prepared disc revision.')
     models = record.get('models')
     if not isinstance(models, dict) or set(models) != set(MODEL_ENV):
-        raise ValueError('This runtime requires all three artwork styles: video, anime and general.')
+        raise ValueError('This runtime requires all three artwork styles: Animated, Illustrated and General.')
     counts, hashes = record.get('material_counts', {}), record.get('manifest_sha256', {})
     if not isinstance(counts, dict) or not isinstance(hashes, dict):
         raise ValueError('Invalid artwork selection metadata.')

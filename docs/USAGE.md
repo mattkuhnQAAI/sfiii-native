@@ -26,6 +26,8 @@ Game speed is included in v0.5.0-alpha; earlier v0.3.0/v0.4.0-preview1 downloads
 
 The v0.6.0-preview1 Windows application can attach locally generated artwork and offers **Menu > AI graphics > Off / AnimeVideo v3 / x4plus anime / x4plus general**. Packs are built from your own registered Scenario 1–3 discs using the named Real-ESRGAN models. They include eligible world textures and decoded CHR/CHP character frames, including normal/scaled character sprites and matching distorted-sprite textures. Menus and HUD retain original artwork, source transparency is preserved, and unmatched textures use the original artwork. **Off** restores original artwork while retaining your chosen rendering resolution.
 
+The current source uses the clearer labels **Off / Animated / Illustrated / General**, in the same order. Existing packs and saved style selections keep their original identifiers and remain compatible. The published preview retains its earlier labels until a new release is available.
+
 Artwork is precomputed on your GPU, then matched and displayed by the native renderer during play. This is not DLSS or per-frame AI inference. Generating all extracted frames does not establish matching for every character animation, battle object or scene. Unsupported formats, background-plane replacements, some large images, texture seams and full-campaign visual coverage remain unfinished. AI styles can alter details and should be treated as optional experiments. The available Scenario 2 Windows rendering and gameplay checks do not certify AI gameplay on other scenarios or platforms.
 
 The new Windows preview hides the earlier AA and ray-shadow rows. Their shader code remains available for diagnostics; the sections below describe earlier builds.

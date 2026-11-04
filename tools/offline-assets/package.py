@@ -81,7 +81,7 @@ def package(destination, python, framework, make_zip=False):
         '   Keep all three styles\n'
         '   selected to attach packs to the game. Try Quick check before the full multi-hour GPU job.\n'
         '5. Once finished, use Attach packs to game and select the prepared game-data folder.\n'
-        '   Restart the game and choose AI graphics Off, video, anime or general.\n\n'
+        '   Restart the game and choose AI graphics Off, Animated, Illustrated or General.\n\n'
         'A Vulkan-capable GPU/driver is required. GPU indices are assigned by the upscaler; the first may be integrated graphics.\n'
         'Stop safely keeps completed cache. Closing the window leaves a running worker active. Codex can be closed.\n'
         'Output remains uncompressed for play; archive_packs.py creates verified lossless archives for your own backups.\n'
