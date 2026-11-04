@@ -28,16 +28,21 @@ The v0.6.0 Linux/macOS candidates have not been added to the release downloads; 
 
 The improvements and artwork labels above are **source updates, not yet included in the published downloads**. The current preview uses the earlier artwork names: AnimeVideo v3, x4plus anime and x4plus general, respectively. The screenshots below also retain their original captions.
 
-### Registered game editions in the published preview
+### Registered game editions
 
-| Game | Accepted disc revision | Current gameplay coverage |
+The current source contains the following **exact-content profiles**. The preview column shows which profiles are also included in the published v0.6.0-preview1 download; source-only profiles need a build made from newer source.
+
+| Game and registered edition | In published preview? | Local Windows gameplay evidence |
 | --- | --- | --- |
-| Scenario 1 | USA MK-81383 V1.001, unpatched | Local title, town, battle and transition routes; full campaign unvalidated. |
-| Scenario 2 | Shining Force III Translation Project v24, registered disc contents | The broadest local gameplay testing: towns, battles, menus, selected item/spell paths and native-state continuations. Other routes and effects remain unvalidated. |
-| Scenario 3 | Shining Force III Translation Project v25.1, registered disc contents | Fresh-game setup, ship dialogue, first-battle screen and priest interior reached in limited Windows routes. Broader battles and campaign transfers remain unvalidated. |
-| Premium Disc / other revisions | No registered profile yet | Planned; currently unsupported. |
+| Scenario 1 — USA MK-81383 V1.001, unpatched | Yes | Title, town, battle and transition routes tested on an earlier build; full campaign unvalidated. |
+| Scenario 1 — Translation Project v25.1 | Source only | Intro, original-save load and fresh opening tested on an earlier build. Comparison frames were reviewed; broader gameplay remains unvalidated. |
+| Scenario 2 — Translation Project v24 | Yes | Towns, battles, menus, selected item/spell paths and native-state continuations tested on earlier builds; other routes remain unvalidated. |
+| Scenario 2 — v25.1 translation migrated from the registered v24 image | Source only | Experimental, specific locally migrated image; intro, save-load and limited transition routes tested on an earlier build. Not a claim of support for every v25.1 disc variant or original-Saturn compatibility. |
+| Scenario 2 — supplied V1.003 image, header reports V24 | Source only | Exact translation version unverified. Local save-load, battle, volcano, audio and quick-state routes tested; full campaign remains unvalidated. |
+| Scenario 3 — Translation Project v25.1 | Yes | Fresh-game setup, ship dialogue, first-battle screen and priest interior reached on earlier builds; broader battles and campaign transfers remain unvalidated. |
+| Premium Disc / unregistered revisions | No profile | Deferred or unsupported until separately identified and tested. |
 
-Disc verification checks contents, so a matching filename or translation label alone does not establish compatibility. Static module compilation and actual gameplay coverage are tracked separately in [Status and validation](#status-and-validation).
+Disc verification checks contents, so a matching filename or translation label alone does not establish compatibility. The latest runtime optimizations have been replay-tested on the supplied Scenario 2 V1.003 image; the other editions have not yet been revalidated with those changes. Static module compilation and actual gameplay coverage are tracked separately in [Status and validation](#status-and-validation).
 
 ### What the latest preview adds
 
@@ -65,8 +70,9 @@ v25.1 has an independent profile, with intro, original-save load and fresh openi
 routes checked; the original USA profile remains separate. Development profiles also
 include the experimental Scenario 2 v24-to-v25.1 translation migration and the
 supplied V1.003 image whose header reports V24. Its exact translation version is
-unverified, and its historical battle replay does not reach battle. These local
-additions are **not included in the existing published downloads**.
+unverified. A historical replay for the older image did not reach battle on this
+revision; separate local battle and volcano routes have since been tested. These
+source-only additions are **not included in the existing published downloads**.
 
 The development save manager also exports ordinary saves as individual raw BIN
 files for use with compatible emulator or Saroo save tools. Export does not
