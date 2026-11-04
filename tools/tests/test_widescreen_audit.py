@@ -16,6 +16,7 @@ def word(data, address, value):
 
 def quad(data, address, xs):
     word(data, address, 2)
+    word(data, address + 10, 0x0101)
     for i, x in enumerate(xs):
         word(data, address + 12 + i*4, x)
         word(data, address + 14 + i*4, i*4)
@@ -97,6 +98,33 @@ class WidescreenAuditTests(unittest.TestCase):
             audit.analyze_trace(io.StringIO(header + line.replace(',32,2,', ',32,3,')))
         with self.assertRaises(ValueError):
             audit.analyze_trace(io.StringIO(header))
+
+    def test_normal_and_scaled_sprite_geometry(self):
+        words = [0]*16
+        words[5] = 0x0210  # 16 by 16 source
+        words[6], words[7] = 310, 20
+        self.assertEqual(audit.horizontal(audit.shape_points(words, 0, 0), 320), 'crosses_right')
+        self.assertEqual(audit.shape_points(words, 0, 0)[2], [325, 35])
+        words[0] = 0x0a01  # scaled sprite, centered zoom point
+        words[8], words[9] = 20, 10
+        self.assertEqual(audit.shape_points(words, 0, 0)[0], [300, 15])
+        words[5] = 0
+        self.assertIsNone(audit.shape_points(words, 0, 0))
+
+    def test_texture_tracking_distinguishes_unique_ambiguous_and_absent(self):
+        shape = {'kind': 2, 'texture_address': 64, 'texture_size_word': 0x101,
+                 'horizontal': 'crosses_left', 'points': [[-1, 0], [2, 0], [2, 2], [-1, 2]]}
+        result = {'status': 'executed_trace', 'draws': [
+            {'field': 1, 'draw': 1, 'quads': [shape]},
+            {'field': 2, 'draw': 2, 'quads': [shape, shape]},
+            {'field': 3, 'draw': 3, 'quads': []}]}
+        frames = audit.track_texture(result, 2, 64, 0x101)['frames']
+        self.assertEqual([f['matches'] for f in frames], [1, 2, 0])
+        self.assertEqual(frames[0]['horizontal'], 'crosses_left')
+        self.assertNotIn('horizontal', frames[1])
+        self.assertNotIn('horizontal', frames[2])
+        with self.assertRaises(ValueError):
+            audit.track_texture({'status': 'end'}, 2, 64, 0x101)
 
 
 if __name__ == '__main__':

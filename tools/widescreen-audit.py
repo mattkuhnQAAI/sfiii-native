@@ -28,6 +28,37 @@ def horizontal(points, width):
             else 'crosses_left' if xmin < 0 else 'crosses_right' if xmax >= width else 'inside')
 
 
+def shape_points(words, lx, ly):
+    """Reconstruct the runtime's normal, scaled and explicit quad geometry."""
+    kind = words[0] & 15
+    points = [[signed(words[6+2*i], 13)+lx, signed(words[7+2*i], 13)+ly] for i in range(4)]
+    if kind == 0:
+        w, h = ((words[5] >> 8) & 0x3f)*8, words[5] & 0xff
+        if not w or not h:
+            return None
+        x0, y0 = points[0]
+        x1, y1 = x0+w-1, y0+h-1
+    elif kind == 1:
+        if not ((words[5] >> 8) & 0x3f) or not (words[5] & 0xff):
+            return None
+        zp = (words[0] >> 8) & 15
+        x0, y0 = points[0]
+        if not zp:
+            x1, y1 = points[2]
+        else:
+            w, h = signed(words[8], 13), signed(words[9], 13)
+            x0 -= int(w/2) if (zp & 3) == 2 else w if (zp & 3) == 3 else 0
+            y0 -= int(h/2) if ((zp >> 2) & 3) == 2 else h if ((zp >> 2) & 3) == 3 else 0
+            x1, y1 = x0+w, y0+h
+    elif kind in (2, 3, 4):
+        if kind in (2, 3) and (not ((words[5] >> 8) & 0x3f) or not (words[5] & 0xff)):
+            return None
+        return points
+    else:
+        return None
+    return [[x0,y0], [x1,y0], [x1,y1], [x0,y1]]
+
+
 def analyze(data, width=320, guard=20000):
     if len(data) != DUMP_SIZE:
         raise ValueError('Expected an exact runtime video dump')
@@ -65,16 +96,17 @@ def analyze(data, width=320, guard=20000):
                 system_clip = [read(address + 20) & 0x3ff, read(address + 22) & 0x1ff]
             elif kind == 10:
                 local_x, local_y = signed(read(address + 12), 11), signed(read(address + 14), 11)
-            elif kind in (2, 3, 4):
-                # These four-vertex primitives have explicit coordinates. Normal and
-                # scaled sprites use different geometry and are intentionally excluded.
-                points = [[signed(read(address + 12 + 4*i), 13) + local_x,
-                           signed(read(address + 14 + 4*i), 13) + local_y] for i in range(4)]
-                quads.append({'address': address, 'kind': kind, 'points': points,
-                    'horizontal': horizontal(points, width),
-                    'texture_address': read(address + 8) * 8,
-                    'texture_size_word': read(address + 10), 'draw_mode': read(address + 4),
-                    'system_clip': system_clip.copy(), 'user_clip': user_clip.copy()})
+            elif kind in (0, 1, 2, 3, 4):
+                words = [read(address + 2*i) for i in range(16)]
+                points = shape_points(words, local_x, local_y)
+                if points is None:
+                    points = []
+                if points:
+                    quads.append({'address': address, 'kind': kind, 'points': points,
+                        'horizontal': horizontal(points, width),
+                        'texture_address': read(address + 8) * 8,
+                        'texture_size_word': read(address + 10), 'draw_mode': read(address + 4),
+                        'system_clip': system_clip.copy(), 'user_clip': user_clip.copy()})
         link = (read(address + 2) * 8) & (VRAM_SIZE - 1)
         action = jump & 3
         if action == 0:
@@ -115,10 +147,10 @@ def analyze_trace(stream, width=320):
         group = groups.setdefault((field, draw), {'field': field, 'draw': draw, 'commands': 0, 'quads': []})
         group['commands'] += 1
         kind = words[0] & 15
-        if kind not in (2, 3, 4):
-            continue
         lx, ly = int(row['local_x']), int(row['local_y'])
-        points = [[signed(words[6+2*i], 13)+lx, signed(words[7+2*i], 13)+ly] for i in range(4)]
+        points = shape_points(words, lx, ly)
+        if points is None:
+            continue
         group['quads'].append({'address': int(row['address']), 'kind': kind, 'points': points,
             'horizontal': horizontal(points, width), 'texture_address': words[4]*8,
             'texture_size_word': words[5], 'draw_mode': words[2],
@@ -131,18 +163,41 @@ def analyze_trace(stream, width=320):
         draw['quad_edge_counts'] = dict(sorted(Counter(q['horizontal'] for q in draw['quads']).items()))
     return {'status': 'executed_trace', 'width': width, 'draws': draws,
             'limitations': 'Records executed VDP1 commands, not rejected game objects or proof of final visibility; '
-                           'normal/scaled sprites and other primitive types are excluded from quad counts.'}
+                           'line primitives are excluded from quad counts.'}
+
+
+def track_texture(result, kind, texture_address, size_word):
+    """Track a command key without assuming it uniquely identifies an object."""
+    if result.get('status') != 'executed_trace':
+        raise ValueError('Texture tracking requires an executed trace')
+    frames = []
+    for draw in result['draws']:
+        matches = [q for q in draw['quads'] if q['kind'] == kind
+                   and q['texture_address'] == texture_address and q['texture_size_word'] == size_word]
+        entry = {'field': draw['field'], 'draw': draw['draw'], 'matches': len(matches)}
+        if len(matches) == 1:
+            entry['horizontal'] = matches[0]['horizontal']
+            entry['points'] = matches[0]['points']
+        frames.append(entry)
+    return {'key': {'kind': kind, 'texture_address': texture_address, 'size_word': size_word},
+            'frames': frames,
+            'limitations': 'Texture keys can be shared, animated or reused; absence or a unique match '
+                           'does not establish object identity, clipping or the cause of omission.'}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('dump', type=Path, nargs='?')
     parser.add_argument('--trace', type=Path, help='Executed-command CSV from an instrumented local runtime')
+    parser.add_argument('--track', metavar='KIND:ADDRESS:SIZE',
+                        help='Track a texture key across executed draws; integers accept 0x notation')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--width', type=int, default=320)
     args = parser.parse_args()
     if (args.dump is None) == (args.trace is None):
         parser.error('Provide exactly one video dump or executed-command trace')
+    if args.track and not args.trace:
+        parser.error('--track requires --trace')
     output = args.out.resolve()
     if output == ROOT or ROOT in output.parents:
         parser.error('Write reports outside the source repository')
@@ -151,8 +206,16 @@ def main():
             result = analyze_trace(stream, args.width)
     else:
         result = analyze(args.dump.read_bytes(), args.width)
+    if args.track:
+        try:
+            values = [int(value, 0) for value in args.track.split(':')]
+            if len(values) != 3 or any(value < 0 for value in values):
+                raise ValueError
+        except ValueError:
+            parser.error('Expected a non-negative KIND:ADDRESS:SIZE texture key')
+        result['tracking'] = track_texture(result, *values)
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-    summary = {k: v for k, v in result.items() if k not in ('quads', 'draws')}
+    summary = {k: v for k, v in result.items() if k not in ('quads', 'draws', 'tracking')}
     if 'draws' in result:
         summary['draw_count'] = len(result['draws'])
         summary['executed_commands'] = sum(d['commands'] for d in result['draws'])
