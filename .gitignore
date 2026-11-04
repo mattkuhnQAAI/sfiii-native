@@ -42,6 +42,7 @@
 !/tools/validate-native-states.py
 !/tools/validate-modules.py
 !/tools/validate-game-speed.py
+!/tools/widescreen-audit.py
 !/tools/check-source-package.py
 !/tools/dev-env.ps1
 !/tools/generate.py
