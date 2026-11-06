@@ -108,7 +108,7 @@ generate([],sys.argv[2],optest=True,native_states=True)
         f.write('\ntarget_sources(selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/state-stub.cpp")\n')
     build=out/'synthetic-build'
     check('configure-native-host',worker.configure_args(source,build,payload),compiler_env)
-    check('build-native-host',[cmake,'--build',build,'--target','saturn','selftest','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
+    check('build-native-host',[cmake,'--build',build,'--target','saturn','selftest','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','gpu_parity','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
     shutil.copytree(payload/'sdl/lib',build/'lib',symlinks=True)
     check('synthetic-aot-instructions',[build/'selftest',source/'selftest/optest.txt'],required=False)
     # The current runtime prints its usage and exits 2 for --help.
@@ -131,6 +131,15 @@ generate([],sys.argv[2],optest=True,native_states=True)
             gpu['status']='unavailable: this runner exposes no usable GPU/display'
         else:raise RuntimeError('GPU shader test failed:\n'+text[-6000:])
     else:gpu['status']='synthetic shader cases passed; not game/hardware validation'
+    # GPU against the accurate CPU path on synthetic VDP1/VDP2 scenes at 1x/2x/4x.
+    # Diff PNGs stay in the validation directory, uploaded as a workflow artifact.
+    parity,text=check('gpu-cpu-parity',[build/'gpu_parity',out/'gpu-parity',build/'shaders'],
+                      {'SF3_GPU_BACKEND':'metal' if sys.platform=='darwin' else 'vulkan','SF3_GPU_ALLOW_SOFTWARE':'1'},False)
+    if not parity['passed']:
+        if not gpu['passed'] and any(s in text for s in ['GPU renderer initialization','SDL video initialization']):
+            parity['status']='unavailable: this runner exposes no usable GPU/display'
+        else:raise RuntimeError('GPU/CPU parity test failed:\n'+text[-6000:])
+    else:parity['status']='synthetic scenes within CPU-parity limits; 1x exact'
     # Move the whole application, then use its actual executable and compiler.
     relocated=out/'relocated application é'/package.name
     relocated.parent.mkdir()
@@ -165,7 +174,8 @@ target_link_libraries(relocation PRIVATE SDL3::SDL3 Threads::Threads)
     changed.extend('added: '+name for name in sorted(added))
     results.append(dict(name='package-files-unchanged',passed=not changed,changed_files=changed))
     if changed:raise RuntimeError('Validation changed packaged resources: '+', '.join(changed[:10]))
-    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name']!='gpu-shader-cases'),
+    # GPU checks raise on a real failure above; an unavailable GPU (no display on the runner) is not a synthetic failure.
+    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name'] not in ('gpu-shader-cases','gpu-cpu-parity')),
                 gameplay_validated=False,transition_fixtures='unavailable: game data is never uploaded to CI',
                 physical_controller_audio_validation='unavailable',results=results)
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
