@@ -1,5 +1,5 @@
 {
-  "version": "0.6.1-preview1",
+  "version": "0.7.0-preview1",
   "git": {
     "sdl": {
       "url": "https://github.com/libsdl-org/SDL.git",
@@ -45,20 +45,6 @@
       "zig": {
         "url": "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz",
         "sha256": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b"
-      },
-      "cmake": {
-        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz",
-        "sha256": "be9f3faeeaf7921cc2d77cea711dd5e6f72c63af2810cacd9205b3ce8d1593c9"
-      }
-    },
-    "darwin-x86_64": {
-      "python": {
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-x86_64-apple-darwin-install_only_stripped.tar.gz",
-        "sha256": "dfe418e59942d3a73789846a161ba973ea4a1b6e2fa8636bc16ad49c398ff6e9"
-      },
-      "zig": {
-        "url": "https://ziglang.org/download/0.15.2/zig-x86_64-macos-0.15.2.tar.xz",
-        "sha256": "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f"
       },
       "cmake": {
         "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz",
