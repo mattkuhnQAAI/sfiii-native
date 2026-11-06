@@ -4,9 +4,9 @@
 
 ## Latest improvements and highlights
 
-The v0.7.0 preview includes:
+The v0.8.0 release includes. See the [v0.8.0 release notes](docs/release-v0.8.0.md) for the package and validation summary:
 
-- **Official widescreen preview:** the registered Scenario 1–3 profiles expose a 16:9 option with GPU rendering, and Windows hybrid-GPU laptops request the high-performance GPU before SDL starts. The supported presentation for this release is **original game graphics**; turn **AI graphics** to **Off** when using 16:9. AI artwork remains an optional experiment and can misalign or pop in widescreen.
+- **Official widescreen support:** the registered Scenario 1–3 profiles expose a 16:9 option with GPU rendering, and Windows hybrid-GPU laptops request the high-performance GPU before SDL starts. The supported presentation for this release is **original game graphics**; turn **AI graphics** to **Off** when using 16:9. AI artwork remains an optional experiment and can misalign or pop in widescreen.
 
 - **Smoother module transitions:** repeated identification of overlays sharing a loading address is avoided within each search. In one Scenario 2 volcano trace, a lookup fell from about 116 ms to under 2 ms; other stutters remain.
 - **Artwork performance and caching:** incremental GPU uploads reduce repeated work, and the CPU artwork cache grows on PCs with more memory. Artwork is loaded on demand; a larger cache helps only when previously used textures would otherwise be evicted.
@@ -18,14 +18,14 @@ These optimizations are shared runtime code intended for Scenarios 1–3. The la
 
 ## Current status — November 2026
 
-**The project is playable in tested Windows routes and remains an experimental preview.** The latest published preview is [**v0.7.0-preview1**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1). Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
+**The project is playable in tested Windows routes and remains an experimental native port.** The latest published release is [**v0.8.0**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0). Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
 | Component | Available now | Validation status |
 | --- | --- | --- |
-| Windows x64 application | [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Native-0.7.0-preview1-win64.zip), with automatic local game preparation | Recorded gameplay routes, limited native-state continuations and original-graphics widescreen cases tested locally. |
-| Optional graphics builder | [Separate Windows download](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip), about 22 MB | Automatic setup, all three registered discs and three GPU styles tested with limited samples; in-game artwork validation is focused on Scenario 2. Do not rely on AI graphics in widescreen. |
-| Linux x64 | [v0.7.0-preview1 package](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1) | Built and synthetically tested. Real-disc gameplay, widescreen and AI graphics remain unvalidated. |
-| macOS Apple Silicon | No v0.7.0 package | The hosted Apple Silicon runner is unavailable for this release. Intel Mac packages are no longer published, and no Intel substitute is offered. |
+| Windows x64 application | [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), with automatic local game preparation | Recorded gameplay routes, limited native-state continuations and original-graphics widescreen cases tested locally. |
+| Optional graphics builder | [Separate Windows download](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip), about 22 MB | Automatic setup, all three registered discs and three GPU styles tested with limited samples; in-game artwork validation is focused on Scenario 2. Do not rely on AI graphics in widescreen. |
+| Linux x64 | [v0.8.0 package](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) | Built and synthetically tested. Real-disc gameplay, widescreen and AI graphics remain unvalidated. |
+| macOS | Not included in this release | Intel Mac packages are no longer published. An Apple Silicon package is omitted until a hosted build is available. |
 
 Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
 
@@ -33,9 +33,9 @@ Older artwork packs and settings retain their internal identifiers and remain co
 
 ### Registered game editions
 
-The v0.7.0 preview includes the following **exact-content profiles** on Windows, Linux and macOS. Disc identification was checked locally for all six; 16:9 is exposed for each profile, while local widescreen gameplay evidence is currently limited to the supplied Scenario 2 V1.003 image on Windows with original graphics.
+The v0.8.0 release includes the following **exact-content profiles** on Windows and Linux. Disc identification was checked locally for all six; 16:9 is exposed for each profile. Widescreen is intended for original graphics only in this release; local widescreen gameplay evidence is currently strongest for the supplied Scenario 2 V1.003 image on Windows.
 
-| Game and registered edition | In published preview? | Local Windows gameplay evidence |
+| Game and registered edition | In v0.8.0? | Local Windows gameplay evidence |
 | --- | --- | --- |
 | Scenario 1 — USA MK-81383 V1.001, unpatched | Yes | Title, town, battle and transition routes tested on an earlier build; full campaign unvalidated. |
 | Scenario 1 — Translation Project v25.1 | Yes | Intro, original-save load and fresh opening tested on an earlier build. Comparison frames were reviewed; broader gameplay remains unvalidated. |
@@ -74,7 +74,7 @@ routes checked; the original USA profile remains separate. Development profiles 
 include the experimental Scenario 2 v24-to-v25.1 translation migration and the
 supplied V1.003 image whose header reports V24. Its exact translation version is
 unverified. A historical replay for the older image did not reach battle on this
-revision; separate local battle and volcano routes have since been tested. These profiles are included in v0.7.0; each remains limited to its registered exact-content image.
+revision; separate local battle and volcano routes have since been tested. These profiles are included in v0.8.0; each remains limited to its registered exact-content image.
 
 The development save manager also exports ordinary saves as individual raw BIN
 files for use with compatible emulator or Saroo save tools. Export does not
@@ -97,7 +97,7 @@ When updating, extract into a new application folder and choose your existing sc
 - Persistent internal and cartridge backup storage, with import of supported Scenario 1/2/3 raw BIN and version-1 JSON YSBAK saves.
 - Direct native save states (F5/F9), with separate legacy replay checkpoints. Snapshot validation covers limited Scenario 2 translated-v24 routes; broader snapshot compatibility remains unvalidated.
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
-- Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
+- Experimental Linux launcher with bundled offline preparation tools, controller setup and save imports. macOS is not included in this release.
 - Separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware.
 - Optional locally generated artwork: **Off / Animated / Illustrated / General** in the current preview, with eligible world textures and decoded CHR/CHP character frames. Exact source transparency is retained; unmatched artwork, menus and HUD stay original. Extraction counts do not establish complete character, object or campaign coverage.
 
@@ -138,7 +138,7 @@ Selected PNG screenshots are hosted as release documentation, outside the source
 ## What you supply
 
 - **Windows:** Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
-- **Linux/macOS preview:** Ubuntu 22.04 or newer x86-64 desktop, or macOS 13 or newer on Apple Silicon; see [platform requirements](docs/POSIX.md).
+- **Linux:** Ubuntu 22.04 or newer x86-64 desktop; see [platform requirements](docs/POSIX.md). macOS is not included in this release.
 - Your own supported **BIN/CUE or standalone CHD** disc matching one of the [registered editions](#registered-game-editions). Disc contents are verified; a filename or patch label alone is insufficient. The Scenario 1 data-track SHA-256 is:
 
   `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`
@@ -147,11 +147,11 @@ The current runtime provides BIOS services at a high level and **does not load o
 
 ## Get started
 
-**Windows players:** download [**SFIII-Native-0.7.0-preview1-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Native-0.7.0-preview1-win64.zip), extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. For 16:9, leave **AI graphics** set to **Off**. See [desktop setup](docs/DESKTOP.md).
+**Windows players:** download [**SFIII-Native-0.8.0-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. For 16:9, leave **AI graphics** set to **Off**. See [desktop setup](docs/DESKTOP.md).
 
-**Optional artwork experiment:** download [**SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip) separately. Its first run downloads verified upstream tools and prepares its extractor automatically; afterward extraction and GPU upscaling run on your own PC without Codex, API keys or paid services. A full run can take hours and tens of GB across all scenarios/styles. Use **Attach packs to game** when finished, then select **AI graphics** in the game's menu. Keep AI graphics **Off** for widescreen. See [builder setup and limits](docs/DESKTOP.md#optional-graphics-builder).
+**Optional artwork experiment:** download [**SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip) separately. Its first run downloads verified upstream tools and prepares its extractor automatically; afterward extraction and GPU upscaling run on your own PC without Codex, API keys or paid services. A full run can take hours and tens of GB across all scenarios/styles. Use **Attach packs to game** when finished, then select **AI graphics** in the game's menu. Keep AI graphics **Off** for widescreen. See [builder setup and limits](docs/DESKTOP.md#optional-graphics-builder).
 
-**Linux:** download the Linux x64 archive from [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1), extract the complete archive, and open **SFIII Native**. Apple Silicon has no v0.7.0 archive because the hosted ARM runner was unavailable; Intel Mac is not substituted. See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
+**Linux:** download the Linux x64 archive from [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0), extract the complete archive, and open **SFIII Native**. macOS is not included in this release; Intel Mac is not substituted. See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
 
 The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
 
@@ -176,9 +176,9 @@ Close the game, click **Import saves** in the desktop application (or open **Imp
 
 ## Status and validation
 
-The v0.7.0-preview1 Windows candidate passed the six required runtime regression targets plus compiled-entry emission and three available Scenario 2 V1.003 transition routes (title boot, town/house, and a current player-save route). Their captured review frames matched their baselines. Older historical fixtures absent from the external work folder were recorded as **unavailable**, not passing. These checks do not cover every spell, character animation, transition or campaign.
+The v0.8.0 Windows candidate passed the six required runtime regression targets plus compiled-entry emission and three available Scenario 2 V1.003 transition routes (title boot, town/house, and a current player-save route). Their captured review frames matched their baselines. Older historical fixtures absent from the external work folder were recorded as **unavailable**, not passing. These checks do not cover every spell, character animation, transition or campaign.
 
-The local Python suite was exercised with the packaged Python runtime; its POSIX launcher test was unavailable because that runtime does not include Tk. Hosted source/synthetic checks and the Linux/Apple Silicon package candidates are run after publication. Hosted jobs use invented data and do not validate real-disc gameplay, physical controllers or audio devices. The standalone builder's first-run setup, CHD conversion and limited GPU samples were tested separately on Windows.
+The local Python suite was exercised with the packaged Python runtime; its POSIX launcher test was unavailable because that runtime does not include Tk. Hosted source/synthetic checks and the Linux package candidate are run after publication. Hosted jobs use invented data and do not validate real-disc gameplay, physical controllers or audio devices. The standalone builder's first-run setup, CHD conversion and limited GPU samples were tested separately on Windows.
 
 With the local three-style artwork set, measured warm artwork-pack initialization dropped from **16.9 seconds to 1.16 seconds** after indexing/caching. This measures artwork initialization on one PC, not complete game launch time or a performance guarantee for other hardware.
 

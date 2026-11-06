@@ -1,4 +1,4 @@
-name: Linux and macOS candidates
+name: Linux package
 on:
   workflow_dispatch:
   push:
@@ -44,8 +44,6 @@ jobs:
         include:
           - runner: ubuntu-22.04
             target: linux-x86_64
-          - runner: macos-14
-            target: darwin-aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 100
     env:

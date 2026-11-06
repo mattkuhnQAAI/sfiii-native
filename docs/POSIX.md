@@ -1,8 +1,8 @@
 # Linux candidates and Apple Silicon status
 
-v0.7.0-preview1 includes the registered Scenario 1–3 profiles and the 16:9 menu option. Scenario 3 gameplay and widescreen have not been tested on Linux with real game data.
+v0.8.0 includes the registered Scenario 1–3 profiles and the 16:9 menu option. Widescreen is intended for original graphics only; Scenario 3 gameplay and widescreen have not been tested on Linux with real game data.
 
-Download [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1) for Linux x86-64 desktops. The hosted Apple Silicon runner was unavailable for this release, so no Mac archive is published. Intel Mac packages are no longer published or substituted. Native build, synthetic runtime tests and shader tests do not establish real-disc gameplay compatibility. Check each package's validation report before treating a platform as supported.
+Download [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) for Linux x86-64 desktops. macOS is not included in this release; Intel Mac packages are no longer published or substituted. Native build, synthetic runtime tests and shader tests do not establish real-disc gameplay compatibility. Check the package's validation report before treating the platform as supported.
 
 ## Player workflow
 
@@ -18,7 +18,7 @@ F5/F9 save and load direct native states. State loading retains exact pre-load i
 
 ## Validation and release status
 
-The hosted Linux job builds the actual bundled-tool candidate without any disc, BIOS, extracted asset, game save or generated game program. It compiles and runs `dsp_regression`, `core_regression`, `bup_regression`, `machine_regression`, `background_regression` and `audio_buffer`, plus synthetic native host/controller/state/UI checks. The Apple Silicon job is unavailable on the current hosted configuration, so it is not treated as passing. The actual SH-2 emitter generates its own synthetic instruction fixture and CMake project; native execution is compared with its recorded instruction vectors. A mixed data/audio CD made from invented sectors is compressed to CHD, verified and extracted with exact sector comparisons; the CHD tool is also checked for unbundled build-machine library dependencies. Shader tests run when the runner exposes a usable GPU; software Vulkan testing is explicitly separate from physical GPU testing. No usable GPU is reported as **unavailable**, never passed.
+The hosted Linux job builds the actual bundled-tool candidate without any disc, BIOS, extracted asset, game save or generated game program. It compiles and runs `dsp_regression`, `core_regression`, `bup_regression`, `machine_regression`, `background_regression` and `audio_buffer`, plus synthetic native host/controller/state/UI checks. No macOS job is part of this release, and Intel Mac is not substituted. The actual SH-2 emitter generates its own synthetic instruction fixture and CMake project; native execution is compared with its recorded instruction vectors. A mixed data/audio CD made from invented sectors is compressed to CHD, verified and extracted with exact sector comparisons; the CHD tool is also checked for unbundled build-machine library dependencies. Shader tests run when the runner exposes a usable GPU; software Vulkan testing is explicitly separate from physical GPU testing. No usable GPU is reported as **unavailable**, never passed.
 
 Real-disc transitions, towns, battles, audio-device behavior and physical controllers on these platforms remain **unavailable validation** until run locally with supplied data and retained seed backups/clock/input. Hosted build results must not be presented as a full-game compatibility result. No game files should be uploaded to hosted jobs or issues. Windows validation and earlier route coverage do not automatically transfer to another OS, CPU, compiler or GPU backend.
 

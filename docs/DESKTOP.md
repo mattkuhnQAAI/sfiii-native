@@ -1,12 +1,12 @@
 # Automatic Windows preparation
 
-## v0.7.0-preview1
+## v0.8.0
 
-Download [**SFIII-Native-0.7.0-preview1-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Native-0.7.0-preview1-win64.zip), extract the complete ZIP to a new application folder and open **SFIII Native.exe**. Players do not install a compiler or enter build commands. Choose your supported disc and separate scenario data folder, then **Prepare game** and **Play**. If updating, prepare against your existing scenario data folder to retain ordinary saves; keep the old application and build for their build-specific quick states.
+Download [**SFIII-Native-0.8.0-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), extract the complete ZIP to a new application folder and open **SFIII Native.exe**. Players do not install a compiler or enter build commands. Choose your supported disc and separate scenario data folder, then **Prepare game** and **Play**. If updating, prepare against your existing scenario data folder to retain ordinary saves; keep the old application and build for their build-specific quick states.
 
-This Windows preview adds an experimental 16:9 mode, optional locally generated world/character artwork, three selectable AI styles, indexed artwork startup and launcher attachment controls. Rendering choices are **1× / 2× / 5×**; the earlier AA and ray-shadow menu rows are hidden. Original artwork is available without downloading the optional builder. For 16:9, use **AI graphics > Off**: AI artwork can misalign or pop in and is not a supported widescreen path. See [optional graphics setup](#optional-graphics-builder).
+This Windows release adds a 16:9 mode for the registered Scenario 1–3 editions, optional locally generated world/character artwork, three selectable AI styles, indexed artwork startup and launcher attachment controls. Rendering choices are **1× / 2× / 5×**; the earlier AA and ray-shadow menu rows are hidden. Original artwork is available without downloading the optional builder. Widescreen is supported with original graphics only in this release: use **AI graphics > Off** because AI artwork can misalign or pop in at 16:9. See [optional graphics setup](#optional-graphics-builder).
 
-Linux/macOS users should continue using the [v0.5.0-alpha baseline packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha) until new platform candidates are verified. Windows AI rendering/gameplay checks do not establish Linux/macOS AI gameplay compatibility. The optional builder download is Windows x64 only.
+Linux users can use the Linux x64 archive attached to [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0), subject to the validation limits in [POSIX setup](POSIX.md). macOS is not included in this release; Intel Mac packages are no longer published. Windows AI rendering/gameplay checks do not establish Linux AI gameplay compatibility. The optional builder download is Windows x64 only.
 
 ## v0.5.0-alpha additions
 
@@ -54,7 +54,7 @@ Keep both the application and game-data folders. The original disc dump remains 
 
 ## Optional graphics builder
 
-The [**SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip) is a separate optional Windows experiment. It generates artwork from your own supported Scenario 1–3 CUE/CHD files. No commercial disc, BIOS, extracted game artwork, generated artwork packs or saves are included in either download.
+The [**SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip) is a separate optional Windows experiment. It generates artwork from your own supported Scenario 1–3 CUE/CHD files. No commercial disc, BIOS, extracted game artwork, generated artwork packs or saves are included in either download.
 
 1. Extract the **whole builder ZIP** to a writable folder outside the application, source repositories and game-data folders. Open **Start Offline Graphics Builder.cmd**.
 2. Allow first-run setup to finish. It downloads pinned upstream archives with checksum verification, restores dependencies and prepares the extractor automatically. It needs internet access and several GB of space; you install no compiler or Python separately and perform no manual compilation. The CHD utility downloads the first time a CHD is selected.
@@ -83,7 +83,7 @@ Local details are under `preparation/BUILD_ID/setup.log` in the game-data folder
 This is a maintainer step, not a player requirement. After normal dependency setup, use Python 3.11+ and the Windows .NET Framework C# compiler:
 
 ```powershell
-python tools/package-desktop.py --out 'D:\SFIII-packages\SFIII-Native-0.7.0-preview1-win64' --cache 'D:\SFIII-packages\downloads' --zip
+python tools/package-desktop.py --out 'D:\SFIII-packages\SFIII-Native-0.8.0-win64' --cache 'D:\SFIII-packages\downloads' --zip
 ```
 
 The packager verifies archive hashes from `desktop/dependencies.json`, copies reusable source and required licenses, compiles the launcher and project-owned GPU shaders, and creates an external file inventory and ZIP checksum. It never reads a disc or takes generated game code as input. LLVM-MinGW supplies its own headers, libraries and static C++ runtime; the end-user build does not use Visual Studio or the Windows SDK. Python is the official isolated embedded distribution. Microsoft C++ headers/libraries are not bundled.
