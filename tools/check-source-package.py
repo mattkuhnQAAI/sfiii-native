@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = {'.bin', '.cue', '.iso', '.chd', '.wav', '.sav', '.state', '.exe', '.dll',
              '.obj', '.o', '.lib', '.pdb', '.png', '.jpg', '.zip', '.7z', '.log'}
 ALLOWED_TOP = {'native', 'profiles', 'tools', 'docs', 'LICENSES', 'desktop'}
-ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
+ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', '.github/workflows/linux-native.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
 SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc'}
 PATTERNS = {
     'personal Windows path': re.compile(rb'[A-Za-z]:[\\/]+Users[\\/]+', re.I),

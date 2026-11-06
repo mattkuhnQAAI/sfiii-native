@@ -87,7 +87,7 @@ def main():
     configure=[cmake,'-S',payload/'app/tools/tests','-B',checks,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
                '-DCMAKE_C_COMPILER='+str(payload/'compiler/bin/cc'),'-DCMAKE_CXX_COMPILER='+str(payload/'compiler/bin/c++'),
                '-DCMAKE_AR='+str(payload/'compiler/bin/ar'),'-DCMAKE_RANLIB='+str(payload/'compiler/bin/ranlib'),
-               '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),'-DSATURN_RUNTIME='+str(runtime)]
+               '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),'-DCMAKE_LINK_DEPENDS_USE_LINKER=OFF','-DSATURN_RUNTIME='+str(runtime)]
     check('configure-regressions',configure,compiler_env)
     gates=['dsp_regression','core_regression','bup_regression','machine_regression','background_regression','audio_buffer']
     check('build-regressions',[cmake,'--build',checks,'--target',*gates,'--parallel','2'],compiler_env)

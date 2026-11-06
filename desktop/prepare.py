@@ -36,9 +36,9 @@ def atomic_json(path, value):
     temporary.write_text(json.dumps(value,indent=2)+'\n',encoding='utf-8')
     os.replace(temporary,path)
 
-def external_work(path, package=PACKAGE):
+def external_work(path, package=None):
     work = Path(path).resolve()
-    package = Path(package).resolve()
+    package = Path(PACKAGE if package is None else package).resolve()
     if work == package or package in work.parents:
         raise ValueError('Choose a game-data folder outside the application folder.')
     if any((p/'.git').exists() for p in [work,*work.parents]):
