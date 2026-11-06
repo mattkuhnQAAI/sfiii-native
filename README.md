@@ -1,6 +1,6 @@
 # Shining Force III Recomp — Scenarios 1, 2 & 3
 
-**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for the original USA Scenario 1 and selected translated revisions of Scenarios 1–3. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64 and Apple Silicon candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services.
+**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for the original USA Scenario 1 and selected translated revisions of Scenarios 1–3. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; an experimental Linux x64 package is built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services.
 
 ## Latest improvements and highlights
 
@@ -24,7 +24,8 @@ These optimizations are shared runtime code intended for Scenarios 1–3. The la
 | --- | --- | --- |
 | Windows x64 application | [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Native-0.7.0-preview1-win64.zip), with automatic local game preparation | Recorded gameplay routes, limited native-state continuations and original-graphics widescreen cases tested locally. |
 | Optional graphics builder | [Separate Windows download](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip), about 22 MB | Automatic setup, all three registered discs and three GPU styles tested with limited samples; in-game artwork validation is focused on Scenario 2. Do not rely on AI graphics in widescreen. |
-| Linux x64 and macOS Apple Silicon | [v0.7.0-preview1 packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1) | Built and synthetically tested on each platform. Real-disc gameplay, widescreen and AI graphics on these platforms remain unvalidated. Intel Mac packages are no longer published. |
+| Linux x64 | [v0.7.0-preview1 package](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1) | Built and synthetically tested. Real-disc gameplay, widescreen and AI graphics remain unvalidated. |
+| macOS Apple Silicon | No v0.7.0 package | The hosted Apple Silicon runner is unavailable for this release. Intel Mac packages are no longer published, and no Intel substitute is offered. |
 
 Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
 
@@ -150,7 +151,7 @@ The current runtime provides BIOS services at a high level and **does not load o
 
 **Optional artwork experiment:** download [**SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.7.0-preview1/SFIII-Offline-Graphics-Builder-0.7.0-preview1-Windows-x64.zip) separately. Its first run downloads verified upstream tools and prepares its extractor automatically; afterward extraction and GPU upscaling run on your own PC without Codex, API keys or paid services. A full run can take hours and tens of GB across all scenarios/styles. Use **Attach packs to game** when finished, then select **AI graphics** in the game's menu. Keep AI graphics **Off** for widescreen. See [builder setup and limits](docs/DESKTOP.md#optional-graphics-builder).
 
-**Linux/macOS:** download your Linux x64 or Apple Silicon archive from [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1), extract the complete archive, and open **SFIII Native** (**SFIII Native.app** on Mac). See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
+**Linux:** download the Linux x64 archive from [v0.7.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.7.0-preview1), extract the complete archive, and open **SFIII Native**. Apple Silicon has no v0.7.0 archive because the hosted ARM runner was unavailable; Intel Mac is not substituted. See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
 
 The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
 
