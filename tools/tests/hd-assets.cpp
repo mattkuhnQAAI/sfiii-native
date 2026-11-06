@@ -31,6 +31,15 @@ int main(int argc,char** argv) {
     Frame output;output.w=output.h=8;output.px.assign(64,0xF80000);
     assets.apply(source,output);
     if(output.px[0]!=0x7F7FFF || assets.last_pixels()!=32) return 4;
+    // A presentation translation must not change texture coordinates. Keep
+    // geometry identity constant to exercise origin-driven cache invalidation.
+    const auto unshifted=output.px;
+    for(auto& q:source.hd->quads)for(int v=0;v<4;++v)q.xy[v*2]-=53;
+    source.origin_x=53;output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px!=unshifted)return 32;
+    for(auto& q:source.hd->quads)for(int v=0;v<4;++v)q.xy[v*2]+=53;
+    source.origin_x=0;output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px!=unshifted)return 33;
     hd_fingerprint(t->fingerprint,uint64_t(1)<<32|1);
     hd_fingerprint(t->fingerprint,t->rgba[0]);
     ++source.hd->geometry;output.px.assign(64,0xF80000);assets.apply(source,output);

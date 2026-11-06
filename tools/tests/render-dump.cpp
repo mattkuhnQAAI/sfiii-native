@@ -16,13 +16,14 @@
 #endif
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 17) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5] [--gpu-scale 1|2|4|5]\n"); return 2; }
-    bool redraw=false, hd=false;
+    if (argc < 3 || argc > 18) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--wide] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5] [--gpu-scale 1|2|4|5]\n"); return 2; }
+    bool redraw=false, hd=false,wide=false;
     bool bench=false,raster_bench=false,require_replacements=false,require_characters=false;
     int gpu_scale=1;
     std::string pack,export_textures;
     for(int i=3;i<argc;++i) {
         if(std::string(argv[i])=="--redraw") redraw=true;
+        else if(std::string(argv[i])=="--wide") wide=true;
         else if(std::string(argv[i])=="--hd") hd=true;
         else if(std::string(argv[i])=="--assets" && i+1<argc) pack=argv[++i];
         else if(std::string(argv[i])=="--export-textures" && i+1<argc) export_textures=argv[++i];
@@ -49,6 +50,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "unexpected native video dump size: %zu\n", bytes.size()); return 2;
     }
     vdp1_init();
+    if(wide) {vdp1_gpu_available(true);vdp1_widescreen(true);}
     vdp1_hd_collect(!pack.empty() || !export_textures.empty());
     std::memcpy(g_vdp1_vram, bytes.data(), sizeof g_vdp1_vram);
     vdp1_reg_write(0, (bytes[0xc0000] << 8) | bytes[0xc0001], 2);
@@ -64,6 +66,13 @@ int main(int argc, char** argv) {
     std::memcpy(g_vdp2_regs, bytes.data()+v2+sizeof g_vdp2_vram+sizeof g_vdp2_cram, sizeof g_vdp2_regs);
     Frame frame;
     vdp2_compose(frame);
+    if(wide) {
+        Frame expanded;
+        if(!vdp2_compose_wide(expanded,&frame)) {
+            std::fprintf(stderr,"Widescreen unavailable for this fixture\n");return 19;
+        }
+        frame=std::move(expanded);
+    }
     if(!export_textures.empty()) {
         namespace fs=std::filesystem;
         fs::create_directories(export_textures);

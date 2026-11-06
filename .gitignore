@@ -44,6 +44,7 @@
 !/tools/validate-game-speed.py
 !/tools/widescreen-audit.py
 !/tools/widescreen-site-review.py
+!/tools/tests/windows-gpu-preference.ps1
 !/tools/check-source-package.py
 !/tools/dev-env.ps1
 !/tools/generate.py

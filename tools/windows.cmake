@@ -83,6 +83,11 @@ if(SDL3_FOUND AND TARGET saturn_host)
   add_dependencies(render_dump_gpu hd_shaders)
   target_include_directories(saturn_host PRIVATE "${_sf3_input}")
   target_compile_definitions(saturn_host PRIVATE SF3_CONTROLLER_SUPPORT=1)
+  # Must be linked into the executable rather than the reusable host library:
+  # hybrid-GPU drivers inspect the executable exports before SDL starts Vulkan.
+  if(WIN32 AND TARGET saturn)
+    target_sources(saturn PRIVATE "${_sf3_input}/windows-gpu-preference.cpp")
+  endif()
   add_executable(controller_setup "${_sf3_input}/controller-setup.cpp" "${_sf3_input}/controllers.cpp")
   target_link_libraries(controller_setup PRIVATE SDL3::SDL3)
   add_executable(controller_selftest "${_sf3_input}/controller-selftest.cpp" "${_sf3_input}/controllers.cpp")
