@@ -63,10 +63,11 @@ diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
 index cb6af72..37f0829 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,8 +3,12 @@
+@@ -3,8 +3,13 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
++#include "widescreen-bounds.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
  #include <cstdio>
 +#include <cstdlib>
@@ -157,7 +158,7 @@ index cb6af72..37f0829 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +213,31 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +213,49 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
@@ -189,6 +190,24 @@ index cb6af72..37f0829 100644
 -        else { sh2_program_start(c, addr); return; }
 +        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
      }
++    // This routine and its call site occur in the reviewed Scenario 2/3
++    // visibility path. It operates only while the 16:9 compositor is active,
++    // recognizes the exact native viewport bounds and restores guest RAM as
++    // soon as the visibility call returns. Other editions retain their normal
++    // visibility behavior until independently reviewed.
++    extern bool vdp1_widescreen() __attribute__((weak));
++    const uint32_t bounds = c.gbr;
++    const bool candidate = vdp1_widescreen && vdp1_widescreen() && addr == 0x0600C91C &&
++        c.pr == 0x0603D7EC && bounds && (int16_t)ld16(bounds+120) == -160 &&
++        ld16(bounds+124) == 159;
++    sf3::HorizontalBounds expanded;
++    const bool widened = sf3::expanded_visibility_bounds(candidate, 320, 427,
++        53, {-160,159}, expanded);
++    struct RestoreBounds {
++        uint32_t address; bool active;
++        ~RestoreBounds() { if(active) { st16(address+120,uint16_t(-160)); st16(address+124,159); } }
++    } restore{bounds,widened};
++    if(widened) { st16(bounds+120,uint16_t(expanded.left)); st16(bounds+124,uint16_t(expanded.right)); }
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp

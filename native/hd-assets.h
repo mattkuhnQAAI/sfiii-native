@@ -24,7 +24,7 @@ class HdAssets {
     mutable bool cache_valid_=false;
     mutable uint64_t cache_geometry_=0;
     mutable uint64_t cache_materials_=0;
-    mutable int cache_w_=0,cache_h_=0;
+    mutable int cache_w_=0,cache_h_=0,cache_origin_=0;
     mutable uint64_t replacement_epoch_=0;
     mutable size_t replacement_bytes_=0;
     mutable std::deque<size_t> loaded_;
@@ -172,7 +172,7 @@ public:
             material_key=(material_key^unsigned(q.gpu_eligible))*1099511628211ull;
         }
         if(!cache_valid_ || cache_geometry_!=source.hd->geometry || cache_materials_!=material_key || projected_.w!=output.w
-            || projected_.h!=output.h || cache_w_!=source.w || cache_h_!=source.h) {
+            || projected_.h!=output.h || cache_w_!=source.w || cache_h_!=source.h || cache_origin_!=source.origin_x) {
         cache_valid_=false; // A no-match rebuild must not leave the previous cache identity valid.
         projected_.w=output.w;projected_.h=output.h;projected_.px.assign(output.w*output.h,0);
         std::vector<const Asset*> materials(source.hd->quads.size()+1,nullptr);
@@ -197,7 +197,7 @@ public:
             size_t at=y*source.w+x;unsigned id=source.hd->visible[at];
             if(id>=materials.size() || !materials[id]) continue;
             const auto& q=source.hd->quads[id-1];auto& p=projections[at];
-            if(!uv(q,float(x),float(y),p.u,p.v)) continue;
+            if(!uv(q,float(x-source.origin_x),float(y),p.u,p.v)) continue;
             float gu=q.hflip?1-p.u:p.u,gv=q.vflip?1-p.v:p.v;
             float qx=q.xy[0]-q.xy[2]+q.xy[4]-q.xy[6],qy=q.xy[1]-q.xy[3]+q.xy[5]-q.xy[7];
             float ax=q.xy[2]-q.xy[0]+qx*gv,ay=q.xy[3]-q.xy[1]+qy*gv;
@@ -242,7 +242,7 @@ public:
             pending.push_back(std::async(std::launch::async,rows,i*output.h/workers,(i+1)*output.h/workers));
         last_pixels_=rows(0,output.h/workers);
         for(auto& result:pending) last_pixels_+=result.get();
-        cache_geometry_=source.hd->geometry;cache_materials_=material_key;cache_w_=source.w;cache_h_=source.h;cache_valid_=true;
+        cache_geometry_=source.hd->geometry;cache_materials_=material_key;cache_w_=source.w;cache_h_=source.h;cache_origin_=source.origin_x;cache_valid_=true;
         }
         std::vector<int> columns(output.w);
         for(int x=0;x<output.w;++x) columns[x]=std::min((int64_t(2*x+1)*source.w)/(2*output.w),int64_t(source.w-1));

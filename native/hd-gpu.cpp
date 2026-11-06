@@ -197,7 +197,11 @@ SDL_Texture* HdGpu::render(const Frame& frame,const HdAssets& assets) {
             if(!(it->second.attempted&mask)) {a=assets.match(*q.texture,command);it->second.attempted|=mask;}
             if(!a) continue;
             materials[i]=size_t(a-assets.assets_.data());needed.push_back(materials[i]);
-            std::memcpy(data.data()+at,q.xy,32);std::memcpy(data.data()+at+8,q.shade,48);
+            float xy[8];std::memcpy(xy,q.xy,sizeof(xy));
+            // Ownership is indexed in the expanded frame, while submitted
+            // vertices retain guest screen coordinates. Project in one space.
+            for(int vertex=0;vertex<4;++vertex) xy[vertex*2]+=frame.origin_x;
+            std::memcpy(data.data()+at,xy,sizeof(xy));std::memcpy(data.data()+at+8,q.shade,48);
             data[at+20]=q.hflip;data[at+21]=q.vflip;
             data[at+23]=a->replacement.w;data[at+24]=a->replacement.h;
             std::memcpy(data.data()+at+25,a->uv,16);
