@@ -46,6 +46,15 @@ int main(int argc, char** argv) {
     if(choice_at(M_FULLSCREEN)!=0 || !toolbar_shown() || g_settings.flag("display","fullscreen"))return 94;
     vsync_set(false);if(choice_at(M_VSYNC)!=0)return 95;
     draw(false);if(picture.px!=std::vector<uint32_t>(320*240,0x102030))return 96;
+    for(int mode=0;mode<3;++mode) {
+        choose(M_IMAGE_FILTER,mode);draw(false);
+        Settings saved_filter;std::vector<std::string> issues;bool found=false;
+        saved_filter.read(settings_load(g_cfg.settings,found),issues);
+        if(choice_at(M_IMAGE_FILTER)!=mode || !found || !issues.empty() ||
+           saved_filter.get("display","image_filter")!=g_settings.get("display","image_filter") ||
+           picture.px!=std::vector<uint32_t>(320*240,0x102030))return 100;
+    }
+    choose(M_IMAGE_FILTER,1);
     if(argc==3) {
         if(!g_gpu_active)return 97;
         choose(M_VSYNC,1);if(choice_at(M_VSYNC)!=1 || !g_settings.flag("display","vsync"))return 98;
@@ -126,7 +135,7 @@ int main(int argc, char** argv) {
     click(3);
     if (!g_menu_open) return 6;
     auto layout = menu_layout();
-    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC})
+    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC,M_IMAGE_FILTER})
         if(std::none_of(layout.rows.begin(),layout.rows.end(),[&](const MenuRow& row){return row.id==id;}))return 91;
     bool save=false, load=false, has_capture=false;
     for (auto& row : layout.rows) { save |= row.id==M_REPLAY_SAVE; load |= row.id==M_REPLAY_LOAD; has_capture |= row.id==M_CAPTURE; }
