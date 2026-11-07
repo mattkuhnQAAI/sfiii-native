@@ -212,7 +212,7 @@ index cb6af72..8e1540c 100644
      else sh2_call_unknown(c, addr);
  }
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..5d79830 100644
+index feded39..9de586d 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -42,6 +42,18 @@
@@ -606,7 +606,7 @@ index feded39..5d79830 100644
 +}
 +static const int kRenderScales[]={1,2,5};
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
-+static const char* kRenderNames[]={"1x","2x","5x"};
++static const char* kRenderNames[]={"Original","2x","5x"};
 +static int choice_count(MenuId id) { return id==M_IMAGE_FILTER || id==M_TOOLBAR ? 3 : id==M_AI_GRAPHICS ? (g_ai_ready[2]?4:g_ai_ready[1]?3:2) : id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
 +static const char* choice_name(MenuId id, int i) { return id==M_IMAGE_FILTER ? (i==0?"Nearest":i==1?"Bilinear":"Integer smooth") : id==M_FULLSCREEN ? (i?"Fullscreen":"Windowed") : id==M_VSYNC ? (i?"On":"Off") : id==M_TOOLBAR ? (i==0?"Auto":i==1?"Shown":"Hidden") : id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"Animated":i==2?"Illustrated":"General") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
@@ -646,63 +646,129 @@ index feded39..5d79830 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -480,8 +741,23 @@ static void pad_size_set(int size) {
+@@ -480,27 +741,79 @@ static void pad_size_set(int size) {
  static const char* menu_label(MenuId id) {
      switch (id) {
      case M_RESUME: return "Resume";
 +    case M_FULLSCREEN: return "Fullscreen (F11)";
 +    case M_TOOLBAR: return "Toolbar (F10)";
 +    case M_VSYNC: return "VSync";
-+    case M_IMAGE_FILTER: return "Image scaling";
++    case M_IMAGE_FILTER: return "Display filter";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
+-    case M_PAD: return "Show pad";
+-    case M_SIZE: return "Size";
+-    case M_STYLE: return "Style";
+-    default: return "Menu button";
 +    case M_STATE_SAVE: return "Save state (F5)";
 +    case M_STATE_LOAD: return "Load state (F9)";
 +    case M_REPLAY_SAVE: return "Save replay checkpoint";
 +    case M_REPLAY_LOAD: return "Load replay checkpoint";
 +    case M_CAPTURE: return "Capture issue (F8)";
-+    case M_RESOLUTION: return "Internal resolution";
++    case M_RESOLUTION: return "Render resolution";
 +    case M_ASPECT: return "Aspect ratio (beta)";
 +    case M_SPEED: return "Game speed (F6)";
 +    case M_AA: return "Edge AA (beta)";
 +    case M_RAY: return "Ray shadows";
 +    case M_AI_GRAPHICS: return "AI graphics";
-     case M_PAD: return "Show pad";
-     case M_SIZE: return "Size";
-     case M_STYLE: return "Style";
-@@ -492,6 +768,22 @@ static const char* menu_label(MenuId id) {
++    case M_PAD: return "Touch pad";
++    case M_SIZE: return "Pad size";
++    case M_STYLE: return "Pad style";
++    default: return "Touch menu button";
+     }
+ }
+ 
++static std::string render_dimensions() {
++    SDL_Texture* texture=g_tex;
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(gpu_picture_active() && g_gpu_tex)texture=g_gpu_tex;
++#endif
++    float width=0,height=0;
++    if(!texture || !SDL_GetTextureSize(texture,&width,&height))return "Rendered size available during gameplay";
++    return "Rendered: "+std::to_string(int(width))+" x "+std::to_string(int(height));
++}
++static const char* filter_hint() {
++    if(choice_at(M_IMAGE_FILTER)==0)return "Sharp pixels; uneven at fractional sizes.";
++    if(choice_at(M_IMAGE_FILTER)==1)return "Smooth resizing of the finished picture.";
++    return "Integer nearest first, then bilinear.";
++}
++static const char* filter_size_hint() {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(choice_at(M_IMAGE_FILTER)==2 && !g_image_scaler.intermediate_width())return "At this display size, uses bilinear.";
++#endif
++    return "Does not change render resolution.";
++}
++
  static MenuLayout menu_layout() {
-     const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
+-    const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
++    const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 420, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
++    std::vector<std::pair<MenuId, Control>> display;
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(g_sh2_native_states) {game.push_back({M_STATE_SAVE, Control::Action});game.push_back({M_STATE_LOAD, Control::Action});}
 +    game.push_back({M_REPLAY_SAVE, Control::Action});
 +    game.push_back({M_REPLAY_LOAD, Control::Action});
 +    game.push_back({M_CAPTURE, Control::Action});
-+    game.push_back({M_RESOLUTION, Control::Choice});
-+    game.push_back({M_IMAGE_FILTER, Control::Choice});
-+    game.push_back({M_ASPECT, Control::Choice});
-+    game.push_back({M_FULLSCREEN, Control::Choice});
-+    game.push_back({M_TOOLBAR, Control::Choice});
-+    game.push_back({M_VSYNC, Control::Choice});
++    display={{M_FULLSCREEN,Control::Choice},{M_ASPECT,Control::Choice},
++             {M_RESOLUTION,Control::Choice},{M_IMAGE_FILTER,Control::Choice},
++             {M_VSYNC,Control::Choice},{M_TOOLBAR,Control::Choice}};
 +    game.push_back({M_SPEED, Control::Choice});
 +    // Shader diagnostics remain available through environment overrides.
 +    // Show the AI choice only when actual replacement assets are GPU-ready.
-+    if(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2])game.push_back({M_AI_GRAPHICS, Control::Choice});
++    if(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2])display.push_back({M_AI_GRAPHICS, Control::Choice});
 +#endif
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
++    for(auto item:std::vector<std::pair<MenuId,Control>>{
++        {M_PAD,Control::Choice},{M_SIZE,Control::Slider},{M_STYLE,Control::Choice},{M_MENU_BUTTON,Control::Switch}})game.push_back(item);
      game.push_back({M_QUIT, Control::Action});
-     const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +819,7 @@ static MenuLayout menu_layout() {
+-    const std::vector<std::pair<MenuId, Control>> touch = {
+-        {M_PAD, Control::Choice}, {M_SIZE, Control::Slider}, {M_STYLE, Control::Choice}, {M_MENU_BUTTON, Control::Switch}};
+-    float tall = (float)std::max(game.size(), touch.size());
++    auto row_height=[&](MenuId id){return id==M_RESOLUTION || id==M_IMAGE_FILTER ? 100.0f : row;};
++    auto height=[&](const auto& items){float h=0;for(const auto& item:items)h+=row_height(item.first)+gap;return h;};
++    const float game_height=height(game),display_height=height(display);
+     // two columns, or one, whichever is drawn bigger; never bigger than density-independent pixels make it
+     float dp = display_scale(), w = 0.94f * g_out_w, h = 0.94f * g_out_h;
+-    float w2 = 2 * pad + 2 * column + between, h2 = 2 * pad + title + section + tall * (row + gap);
+-    float w1 = 2 * pad + column, h1 = 2 * pad + title + 2 * section + (float)(game.size() + touch.size()) * (row + gap) + gap;
++    float w2 = 2 * pad + 2 * column + between, h2 = 2 * pad + title + section + std::max(game_height,display_height);
++    float w1 = 2 * pad + column, h1 = 2 * pad + title + 2 * section + game_height+display_height+gap;
+     float k2 = std::min({dp, w / w2, h / h2}), k1 = std::min({dp, w / w1, h / h1});
+     bool two = k2 >= k1;
+     float u = two ? k2 : k1;
+@@ -511,15 +824,15 @@ static MenuLayout menu_layout() {
+     l.title_y = l.panel.y + (pad + title / 2) * u;
+     float top = l.panel.y + (pad + title) * u;
+     for (int c = 0; c < 2; ++c) {
+-        auto& items = c == 0 ? game : touch;
++        auto& items = c == 0 ? game : display;
+         float x = l.panel.x + (pad + (two ? c * (column + between) : 0)) * u;
+-        float y = two || c == 0 ? top : top + (section + (float)game.size() * (row + gap) + gap) * u;
++        float y = two || c == 0 ? top : top + (section + game_height + gap) * u;
+         l.column_x[c] = x;
+         l.section_y[c] = y + section / 2 * u;
+         y += section * u;
+         for (auto& [id, control] : items) {
+-            l.rows.push_back({id, control, c, {x, y, column * u, row * u}});
+-            y += (row + gap) * u;
++            l.rows.push_back({id, control, c, {x, y, column * u, row_height(id) * u}});
++            y += (row_height(id) + gap) * u;
+         }
+     }
+     return l;
+@@ -527,8 +840,9 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
 -    float w = r.control == Control::Switch ? 52 * l.u : 0.58f * r.r.w;
+-    return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
 +    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT || r.id==M_SPEED || r.id==M_AA) ? 0.46f : 0.58f) * r.r.w;
-     return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
++    const float height=(r.id==M_RESOLUTION || r.id==M_IMAGE_FILTER)?52*l.u:r.r.h;
++    return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, height - 18 * l.u};
  }
  
-@@ -563,12 +855,206 @@ static void menu_quit(bool to_saves) {
+ static SDL_FRect segment(const MenuLayout& l, const MenuRow& r, int i) {
+@@ -563,12 +877,206 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -910,7 +976,7 @@ index feded39..5d79830 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1066,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1088,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -919,15 +985,15 @@ index feded39..5d79830 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -599,6 +1085,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+@@ -599,6 +1107,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
          g_menu_at = (int)i;
          SDL_FRect a = control_area(l, r);
          if (r.control == Control::Choice && inside(a, x, y)) {
-+            if(r.id==M_AI_GRAPHICS) {menu_adjust(r.id,x<a.x+a.w/2?-1:1);return;}
++            if(r.id==M_AI_GRAPHICS || r.id==M_IMAGE_FILTER) {menu_adjust(r.id,x<a.x+a.w/2?-1:1);return;}
              for (int k = 0; k < choice_count(r.id); ++k)
                  if (inside(segment(l, r, k), x, y)) choose(r.id, k);
          } else if (r.control == Control::Slider && inside(a, x, y)) {
-@@ -656,13 +1143,25 @@ static void on_event(const SDL_Event& e) {
+@@ -656,13 +1165,25 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -954,7 +1020,7 @@ index feded39..5d79830 100644
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
          if (!g_menu_open) {
              if (back && !e.key.repeat) menu_open();
-@@ -686,10 +1185,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1207,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -978,11 +1044,34 @@ index feded39..5d79830 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -841,6 +1351,12 @@ static void draw_menu() {
+@@ -824,15 +1356,20 @@ static void draw_menu() {
+     ui_text(l.panel.x + 20 * u, l.title_y, 26 * u, "Paused", text, true, UiAlign::Left);
+     ui_text(l.panel.x + l.panel.w - 20 * u, l.title_y, 13 * u, "Back to resume", muted, false, UiAlign::Right);
+     for (int c = 0; c < 2; ++c)
+-        ui_text(l.column_x[c], l.section_y[c], 12 * u, c == 0 ? "GAME" : "TOUCH CONTROLS", muted, true, UiAlign::Left);
++        ui_text(l.column_x[c], l.section_y[c], 12 * u, c == 0 ? "GAME & INPUT" : "DISPLAY & GRAPHICS", muted, true, UiAlign::Left);
+     g_menu_at = std::clamp(g_menu_at, 0, (int)l.rows.size() - 1);
+     for (size_t i = 0; i < l.rows.size(); ++i) {
+         const MenuRow& r = l.rows[i];
+-        float cy = r.r.y + r.r.h / 2;
++        const bool detailed=r.id==M_RESOLUTION || r.id==M_IMAGE_FILTER;
++        float cy = r.r.y + (detailed?26*u:r.r.h/2);
+         if ((int)i == g_menu_at) ui_fill_rounded({r.r.x - 2 * u, r.r.y - 2 * u, r.r.w + 4 * u, r.r.h + 4 * u}, 14 * u, ring);
+         ui_fill_rounded(r.r, 12 * u, r.id == M_RESUME ? accent : row);
+         SDL_FColor label = r.id == M_QUIT ? rgba(1, 0.52f, 0.5f, 1) : text;
+         ui_text(r.r.x + 16 * u, cy, 16 * u, menu_label(r.id), label, true, UiAlign::Left);
++        if(detailed) {
++            ui_text(r.r.x+16*u,r.r.y+63*u,12*u,r.id==M_RESOLUTION?render_dimensions():filter_hint(),muted,false,UiAlign::Left);
++            ui_text(r.r.x+16*u,r.r.y+82*u,12*u,r.id==M_RESOLUTION?"Geometry detail; textures stay original.":filter_size_hint(),muted,false,UiAlign::Left);
++        }
+         SDL_FRect a = control_area(l, r);
+         switch (r.control) {
+         case Control::Action:
+@@ -841,6 +1378,12 @@ static void draw_menu() {
          case Control::Choice: {
              ui_fill_rounded(a, a.h / 2, well);
              int at = choice_at(r.id);
-+            if(r.id==M_AI_GRAPHICS) {
++            if(r.id==M_AI_GRAPHICS || r.id==M_IMAGE_FILTER) {
 +                ui_text(a.x+12*u,cy,18*u,"‹",muted,true);
 +                ui_text(a.x+a.w-12*u,cy,18*u,"›",muted,true);
 +                ui_text(a.x+a.w/2,cy,14*u,choice_name(r.id,at),text,true);
@@ -991,7 +1080,7 @@ index feded39..5d79830 100644
              for (int k = 0; k < choice_count(r.id); ++k) {
                  SDL_FRect s = segment(l, r, k);
                  if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
-@@ -894,12 +1410,46 @@ static void draw_catching_up() {
+@@ -894,12 +1437,46 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1040,7 +1129,7 @@ index feded39..5d79830 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1462,16 @@ static void draw() {
+@@ -912,15 +1489,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1060,7 +1149,7 @@ index feded39..5d79830 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1482,95 @@ static void menu_loop() {
+@@ -931,38 +1509,95 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1177,7 +1266,7 @@ index feded39..5d79830 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1581,16 @@ void host_present(const Frame& f) {
+@@ -973,12 +1608,16 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
