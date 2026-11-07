@@ -1,0 +1,43 @@
+// Invented fixed-point geometry; no game assets or instruction bytes.
+#include "vertex-precision.h"
+#include <cstdio>
+#include <cstdlib>
+static void check(bool v,const char* why){if(!v){std::fprintf(stderr,"FAIL: %s\n",why);std::exit(1);}}
+static uint32_t packed(int x,int y){return uint32_t(uint16_t(x))<<16|uint16_t(y);}
+int main() {
+    unsigned cases=0;
+    for(int sign:{-1,1})for(int fraction:{0,8192,32768,57344}) {
+        const int x=sign*(2*65536+fraction),y=sign*(3*65536+fraction);
+        sf3::ProjectedPoint point{packed(int(std::floor(x/65536.0)),int(std::floor(y/65536.0))),x,y,8*65536};
+        std::array<float,2> out{};
+        check(sf3::recover_projected_point(point,8*65536,2,out),"signed fractional reconstruction");
+        check(out[0]==x/65536.0f && out[1]==y/65536.0f,"recover fractions, not a smoothing estimate");++cases;
+    }
+    std::array<float,2> out{};
+    sf3::ProjectedPoint point{packed(0,-1),32769,-32768,65536};
+    check(sf3::recover_projected_point(point,65536,2,out) && out[0]==.5f && out[1]==-.5f,"clip-status bit does not move geometry");++cases;
+    point.packed=packed(2,-1);check(!sf3::recover_projected_point(point,65536,2,out),"unmatched integer projection rejected");++cases;
+    point={packed(0,0),0,0,1};check(!sf3::recover_projected_point(point,INT32_MAX,28,out),"quotient overflow rejected");++cases;
+    for(int z:{0,-1}){point.z=z;check(!sf3::recover_projected_point(point,65536,2,out),"invalid depth rejected");++cases;}
+    point={packed(16,-16),65536,-65536,65536};
+    check(sf3::recover_projected_point(point,32*65536,2,out) && out[0]==16 && out[1]==-16,"near-plane clamp matches integer producer");++cases;
+    for(int projection:{0,-65536})check(!sf3::recover_projected_point(point,projection,2,out),"invalid projection rejected");
+    check(!sf3::recover_projected_point(point,65536,29,out),"unsafe near shift rejected");cases+=3;
+    uint16_t a[16]={2,123,0x1428,0,0x1000,0x818,1,2,3,4,5,6,7,8,0x3000,0};
+    auto key=sf3::vertex_command_key(a);a[0]|=0x1000;a[1]=456;a[14]=0x5000;a[15]=1234;
+    check(sf3::vertex_command_key(a)==key,"relocated links and lighting table do not alter geometry key");++cases;
+    for(int i:{2,3,4,5,6,7,8,9,10,11,12,13}){a[i]^=1;check(sf3::vertex_command_key(a)!=key,"material or corner changes invalidate correspondence");a[i]^=1;++cases;}
+    a[0]^=0x10;check(sf3::vertex_command_key(a)!=key,"texture orientation is part of identity");++cases;
+    sf3::VertexCommandCache cache;sf3::PrecisionQuad first{},second{};
+    first.precise[0]=.25f;second.precise[0]=.75f;
+    cache.store(key,first,100);cache.store(key,first,100);
+    check(cache.find(key,100) && cache.find(key,103),"identical shared vertices stay usable through displayed-field latency");++cases;
+    check(!cache.find(key,99) && !cache.find(key,104),"future or stale metadata rejected");++cases;
+    cache.store(key,second,100);cache.store(key,first,100);
+    check(!cache.find(key,100),"conflicting projections stay ambiguous even after another identical submission");++cases;
+    cache.store(key,second,101);check(cache.find(key,101) && cache.find(key,101)->precise[0]==.75f,"next frame can refresh an unchanged integer command");++cases;
+    cache.clear();check(!cache.find(key,101) && !cache.size(),"snapshot/scene reset discards prior correspondences");++cases;
+    for(unsigned i=0;i<8193;++i){auto unique=key;unique[4]=uint16_t(i);cache.store(unique,first,200);check(cache.size()<=8192,"bounded cache");}
+    check(cache.size()==1 && !cache.find(key,200),"capacity rollover discards older geometry");++cases;
+    std::printf("PASS: %u projection, boundary and command-identity cases\n",cases);return 0;
+}

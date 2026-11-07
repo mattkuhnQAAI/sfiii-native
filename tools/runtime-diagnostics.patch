@@ -60,7 +60,7 @@ index 566fcfd..18c8628 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..8e1540c 100644
+index cb6af72..6b05a74 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,8 +3,12 @@
@@ -157,11 +157,13 @@ index cb6af72..8e1540c 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,11 +213,51 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,11 +213,53 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
 -    if (SH2_UNLIKELY(is_base(addr)) && !inside_loaded_program(addr)) {
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t) __attribute__((weak));
++    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr);
 +    static const char* probe = std::getenv("SF3_CALL_ADDRESS");
 +    static const char* path = std::getenv("SF3_CALL_DUMP");
 +    static const uint32_t probe_addr = probe ? std::strtoul(probe, nullptr, 16) : 0;
@@ -212,10 +214,10 @@ index cb6af72..8e1540c 100644
      else sh2_call_unknown(c, addr);
  }
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..193d07d 100644
+index feded39..d1b52fc 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,18 @@
+@@ -42,6 +42,19 @@
  #include <chrono>
  #include <cstring>
  #include <map>
@@ -228,13 +230,14 @@ index feded39..193d07d 100644
 +#include "hd-assets.h"
 +#include "hd-gpu.h"
 +#include "image-scaler.h"
++#include "vertex-precision.h"
 +#include <fstream>
 +#include <stdexcept>
 +#endif
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +62,48 @@ static SDL_Texture* g_tex;
+@@ -50,19 +63,48 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -285,7 +288,7 @@ index feded39..193d07d 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +132,30 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +133,30 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -316,7 +319,7 @@ index feded39..193d07d 100644
      bind_keyboard();
  }
  
-@@ -112,7 +177,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +178,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -330,7 +333,7 @@ index feded39..193d07d 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,16 +192,60 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,16 +193,64 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -355,6 +358,10 @@ index feded39..193d07d 100644
 +    if(const char* aa=std::getenv("SF3_AA"))g_gpu.antialiasing(std::strcmp(aa,"1")==0);
 +    if(const char* ray=std::getenv("SF3_RAY_SHADOWS"))g_gpu.ray_shadows(std::strcmp(ray,"1")==0);
 +    vdp1_gpu_available(g_gpu_active);vdp1_hd_collect(gpu_picture_active());
++    const char* vertex_precision=std::getenv("SF3_VERTEX_PRECISION");
++    sf3::vertex_precision_configure(g_gpu_active && vertex_precision && !std::strcmp(vertex_precision,"1"));
++    if(vertex_precision && !std::strcmp(vertex_precision,"1"))
++        sat_note("Vertex precision: guarded Scenario 2 prototype; unmatched and clipped geometry retains native positions");
 +    const char* hires_backgrounds=std::getenv("SF3_HIRES_BACKGROUNDS");
 +    vdp2_hires_backgrounds(g_gpu_active && hires_backgrounds && std::strcmp(hires_backgrounds,"1")==0);
 +    if(hires_backgrounds && std::strcmp(hires_backgrounds,"1")==0)
@@ -392,7 +399,7 @@ index feded39..193d07d 100644
      return true;
  }
  
-@@ -150,6 +265,11 @@ bool host_open() {
+@@ -150,6 +270,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -404,7 +411,7 @@ index feded39..193d07d 100644
      return true;
  }
  
-@@ -163,6 +283,10 @@ struct HostCall {
+@@ -163,6 +288,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -415,7 +422,7 @@ index feded39..193d07d 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +298,103 @@ bool host_audio_open() {
+@@ -174,23 +303,107 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -496,6 +503,10 @@ index feded39..193d07d 100644
 -    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
 +    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
 +#ifdef SF3_CONTROLLER_SUPPORT
++    const auto vertex_stats=sf3::vertex_precision_stats();
++    if(vertex_stats.captured || vertex_stats.rejected)
++        std::fprintf(stderr,"  vertex precision: %llu recorded quads, %llu GPU quads refined, %llu unsupported candidates retained\n",
++                     (unsigned long long)vertex_stats.captured,(unsigned long long)vertex_stats.applied,(unsigned long long)vertex_stats.rejected);
 +    if(g_perf_fields>1)std::fprintf(stderr,"  presentation profile: %llu fields, %.3f seconds, %.3f fields/sec; %d audio underruns in measured interval; GPU %llu draws, %llu repeated fields reused; %llu native compositions reused; %llu sampled fields\n",
 +        (unsigned long long)(g_perf_last-g_perf_first),std::chrono::duration<double>(g_perf_end-g_perf_begin).count(),
 +        (g_perf_last-g_perf_first)/std::chrono::duration<double>(g_perf_end-g_perf_begin).count(),
@@ -523,7 +534,7 @@ index feded39..193d07d 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +485,9 @@ static void read_pads() {
+@@ -281,6 +494,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -533,7 +544,7 @@ index feded39..193d07d 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +499,7 @@ static void read_pads() {
+@@ -292,6 +508,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -541,7 +552,7 @@ index feded39..193d07d 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +511,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +520,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -554,7 +565,7 @@ index feded39..193d07d 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +541,7 @@ void host_rebind() {
+@@ -329,6 +550,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -562,7 +573,7 @@ index feded39..193d07d 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +549,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +558,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -572,7 +583,7 @@ index feded39..193d07d 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +654,7 @@ static uint16_t touch_read() {
+@@ -438,7 +663,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -581,7 +592,7 @@ index feded39..193d07d 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +672,48 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +681,48 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -632,7 +643,7 @@ index feded39..193d07d 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +722,28 @@ static int choice_at(MenuId id) {
+@@ -468,6 +731,28 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -661,7 +672,7 @@ index feded39..193d07d 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -480,27 +756,88 @@ static void pad_size_set(int size) {
+@@ -480,27 +765,88 @@ static void pad_size_set(int size) {
  static const char* menu_label(MenuId id) {
      switch (id) {
      case M_RESUME: return "Resume";
@@ -760,7 +771,7 @@ index feded39..193d07d 100644
      float k2 = std::min({dp, w / w2, h / h2}), k1 = std::min({dp, w / w1, h / h1});
      bool two = k2 >= k1;
      float u = two ? k2 : k1;
-@@ -511,15 +848,15 @@ static MenuLayout menu_layout() {
+@@ -511,15 +857,15 @@ static MenuLayout menu_layout() {
      l.title_y = l.panel.y + (pad + title / 2) * u;
      float top = l.panel.y + (pad + title) * u;
      for (int c = 0; c < 2; ++c) {
@@ -780,7 +791,7 @@ index feded39..193d07d 100644
          }
      }
      return l;
-@@ -527,8 +864,9 @@ static MenuLayout menu_layout() {
+@@ -527,8 +873,9 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -792,7 +803,7 @@ index feded39..193d07d 100644
  }
  
  static SDL_FRect segment(const MenuLayout& l, const MenuRow& r, int i) {
-@@ -563,12 +901,207 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +910,207 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -1001,7 +1012,7 @@ index feded39..193d07d 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1113,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1122,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -1010,7 +1021,7 @@ index feded39..193d07d 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -599,6 +1132,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+@@ -599,6 +1141,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
          g_menu_at = (int)i;
          SDL_FRect a = control_area(l, r);
          if (r.control == Control::Choice && inside(a, x, y)) {
@@ -1018,7 +1029,7 @@ index feded39..193d07d 100644
              for (int k = 0; k < choice_count(r.id); ++k)
                  if (inside(segment(l, r, k), x, y)) choose(r.id, k);
          } else if (r.control == Control::Slider && inside(a, x, y)) {
-@@ -656,13 +1190,25 @@ static void on_event(const SDL_Event& e) {
+@@ -656,13 +1199,25 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1045,7 +1056,7 @@ index feded39..193d07d 100644
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
          if (!g_menu_open) {
              if (back && !e.key.repeat) menu_open();
-@@ -686,10 +1232,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1241,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1069,7 +1080,7 @@ index feded39..193d07d 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -824,15 +1381,20 @@ static void draw_menu() {
+@@ -824,15 +1390,20 @@ static void draw_menu() {
      ui_text(l.panel.x + 20 * u, l.title_y, 26 * u, "Paused", text, true, UiAlign::Left);
      ui_text(l.panel.x + l.panel.w - 20 * u, l.title_y, 13 * u, "Back to resume", muted, false, UiAlign::Right);
      for (int c = 0; c < 2; ++c)
@@ -1092,7 +1103,7 @@ index feded39..193d07d 100644
          SDL_FRect a = control_area(l, r);
          switch (r.control) {
          case Control::Action:
-@@ -841,6 +1403,12 @@ static void draw_menu() {
+@@ -841,6 +1412,12 @@ static void draw_menu() {
          case Control::Choice: {
              ui_fill_rounded(a, a.h / 2, well);
              int at = choice_at(r.id);
@@ -1105,7 +1116,7 @@ index feded39..193d07d 100644
              for (int k = 0; k < choice_count(r.id); ++k) {
                  SDL_FRect s = segment(l, r, k);
                  if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
-@@ -894,12 +1462,49 @@ static void draw_catching_up() {
+@@ -894,12 +1471,49 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1157,7 +1168,7 @@ index feded39..193d07d 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1517,16 @@ static void draw() {
+@@ -912,15 +1526,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1177,7 +1188,7 @@ index feded39..193d07d 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1537,95 @@ static void menu_loop() {
+@@ -931,38 +1546,95 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1294,7 +1305,7 @@ index feded39..193d07d 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1636,16 @@ void host_present(const Frame& f) {
+@@ -973,12 +1645,16 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -2320,7 +2331,7 @@ index 91d606c..387ded9 100644
          if (n) raw(s.data(), n);
      }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..d16b001 100644
+index 8589d33..04bd941 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -38,6 +38,7 @@
@@ -2331,7 +2342,7 @@ index 8589d33..d16b001 100644
  #include <unordered_map>
  
  uint8_t g_vdp1_vram[0x80000];
-@@ -54,15 +55,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+@@ -54,15 +55,69 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
  static bool g_drawing;
  static uint64_t g_draw_end, g_frame_changes, g_draws;
  
@@ -2376,6 +2387,7 @@ index 8589d33..d16b001 100644
  static int g_ux0, g_uy0, g_ux1 = 319, g_uy1 = 223;
  static int g_local_x, g_local_y;
 +static bool g_hd_collect;
++static const uint8_t* g_precision_command;
 +static uint16_t g_hd_owner[2][512*256];
 +static HdScene g_hd_scene[2];
 +static uint16_t g_hd_current;
@@ -2394,11 +2406,13 @@ index 8589d33..d16b001 100644
  uint64_t vdp1_draws() { return g_draws; }
  
  void vdp1_init() {
++    extern void sf3_vertex_precision_reset() __attribute__((weak));
++    if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
 +    ++g_presentation_epoch;
      g_reg[MODR] = 0x1000;                       // version 1
      g_reg[EDSR] = 0x0002;                       // the last draw has ended
  }
-@@ -94,6 +146,7 @@ struct Cmd {
+@@ -94,6 +149,7 @@ struct Cmd {
      uint16_t lut[16];
      Rgb g[4];                                   // A B C D
  };
@@ -2406,7 +2420,7 @@ index 8589d33..d16b001 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +189,65 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -136,12 +192,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
  
@@ -2448,6 +2462,9 @@ index 8589d33..d16b001 100644
 +    if(c.gouraud) for(int i=0;i<4;++i) {
 +        q.shade[i*3]=(c.g[i].r-16)*8.0f;q.shade[i*3+1]=(c.g[i].g-16)*8.0f;q.shade[i*3+2]=(c.g[i].b-16)*8.0f;
 +    }
++    extern bool sf3_vertex_precision_quad(const uint8_t*,float*) __attribute__((weak));
++    if(q.gpu_eligible && g_precision_command && (c.ctrl&15)==2 && sf3_vertex_precision_quad)
++        sf3_vertex_precision_quad(g_precision_command,q.xy);
 +    hd_fingerprint(scene.fingerprint,texture->fingerprint);
 +    hd_fingerprint(scene.fingerprint,unsigned(q.hflip)|(unsigned(q.vflip)<<1));
 +    for(float value:q.xy) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
@@ -2472,7 +2489,7 @@ index 8589d33..d16b001 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +262,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +268,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2491,15 +2508,16 @@ index 8589d33..d16b001 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -211,6 +321,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +327,8 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
++    g_precision_command=cmd;
 +    g_hd_current=0;
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +367,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +374,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2512,7 +2530,7 @@ index 8589d33..d16b001 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +406,27 @@ struct RecFrame {
+@@ -289,6 +413,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2540,7 +2558,7 @@ index 8589d33..d16b001 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +450,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +457,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2555,7 +2573,7 @@ index 8589d33..d16b001 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +466,12 @@ static void draw() {
+@@ -320,6 +473,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2568,7 +2586,7 @@ index 8589d33..d16b001 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +758,11 @@ static void erase(int which) {
+@@ -606,7 +765,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2581,7 +2599,7 @@ index 8589d33..d16b001 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +832,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +839,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2611,7 +2629,7 @@ index 8589d33..d16b001 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +873,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +880,42 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2646,7 +2664,11 @@ index 8589d33..d16b001 100644
 +        }
 +        if(s.loading) {scene.visible.clear();scene.effects.clear();scene.composition.clear();}
 +    }
-+    if(s.loading) {++g_presentation_epoch;g_hd_textures.clear();}
++    if(s.loading) {
++        ++g_presentation_epoch;g_hd_textures.clear();
++        extern void sf3_vertex_precision_reset() __attribute__((weak));
++        if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
++    }
 +    if(s.loading && g_render_scale>1) for(int p=0;p<2;++p)
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
