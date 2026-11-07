@@ -5,7 +5,7 @@
 #include <fstream>
 
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && !(argc==3 && std::string(argv[2])=="--display-only")) return 2;
     namespace fs = std::filesystem;
     auto root = fs::path(argv[1]);
     fs::create_directories(root);
@@ -24,6 +24,35 @@ int main(int argc, char** argv) {
     video_state(state);
     Frame picture; picture.w=320; picture.h=240; picture.px.assign(320*240, 0x102030);
     present(picture);
+    // Hidden toolbar has no reserved height and cannot activate invisible controls.
+    toolbar_set(2);draw(false);
+    if(replay_bar_height()!=0 || g_dst.h<=0 || g_dst.y<0)return 85;
+    SDL_Event hidden_click{};hidden_click.type=SDL_EVENT_MOUSE_BUTTON_DOWN;hidden_click.button.button=SDL_BUTTON_LEFT;
+    auto hidden_rect=replay_bar_button(3);
+    SDL_RenderCoordinatesToWindow(g_ren,hidden_rect.x+hidden_rect.w/2,hidden_rect.y+hidden_rect.h/2,&hidden_click.button.x,&hidden_click.button.y);
+    on_event(hidden_click);if(g_menu_open)return 86;
+    SDL_Event bar_key{};bar_key.type=SDL_EVENT_KEY_DOWN;bar_key.key.scancode=SDL_SCANCODE_F10;
+    on_event(bar_key);if(!toolbar_shown())return 87;
+    bar_key.key.repeat=true;on_event(bar_key);if(!toolbar_shown())return 88;
+    std::vector<std::string> display_problems;Settings display_saved;bool display_found=false;
+    display_saved.read(settings_load(g_cfg.settings,display_found),display_problems);
+    if(!display_found || !display_problems.empty() || display_saved.get("display","toolbar")!="shown")return 90;
+    toolbar_set(0);draw(false);if(replay_bar_height()<=0)return 89;
+    // The same menu path and F11 path share persistence and auto toolbar behavior.
+    choose(M_FULLSCREEN,1);SDL_SyncWindow(g_win);
+    if(choice_at(M_FULLSCREEN)!=1 || toolbar_shown())return 92;
+    bar_key.key.repeat=false;on_event(bar_key);if(!toolbar_shown())return 93;
+    toolbar_set(0);bar_key.key.scancode=SDL_SCANCODE_F11;on_event(bar_key);SDL_SyncWindow(g_win);
+    if(choice_at(M_FULLSCREEN)!=0 || !toolbar_shown() || g_settings.flag("display","fullscreen"))return 94;
+    vsync_set(false);if(choice_at(M_VSYNC)!=0)return 95;
+    draw(false);if(picture.px!=std::vector<uint32_t>(320*240,0x102030))return 96;
+    if(argc==3) {
+        if(!g_gpu_active)return 97;
+        choose(M_VSYNC,1);if(choice_at(M_VSYNC)!=1 || !g_settings.flag("display","vsync"))return 98;
+        draw(true);choose(M_VSYNC,0);if(choice_at(M_VSYNC)!=0)return 99;
+        std::printf("PASS: GPU fullscreen, toolbar, hidden click, preference persistence and VSync on/off (%s, %s)\n",g_gpu.backend(),g_gpu.adapter());
+        return 0;
+    }
     SDL_Event event{};
     event.type=SDL_EVENT_KEY_DOWN; event.key.scancode=SDL_SCANCODE_F5;
     on_event(event);
@@ -97,6 +126,8 @@ int main(int argc, char** argv) {
     click(3);
     if (!g_menu_open) return 6;
     auto layout = menu_layout();
+    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC})
+        if(std::none_of(layout.rows.begin(),layout.rows.end(),[&](const MenuRow& row){return row.id==id;}))return 91;
     bool save=false, load=false, has_capture=false;
     for (auto& row : layout.rows) { save |= row.id==M_REPLAY_SAVE; load |= row.id==M_REPLAY_LOAD; has_capture |= row.id==M_CAPTURE; }
     if (!save || !load || !has_capture) return 7;
