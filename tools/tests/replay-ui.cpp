@@ -112,7 +112,12 @@ int main(int argc, char** argv) {
     click(6);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=2)return 41;
     if(choice_count(M_RESOLUTION)!=3 || std::string(choice_name(M_RESOLUTION,2))!="5x")return 21;
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
-    for(int i=0;i<5+kRenderScaleCount;++i) {
+    for(int cycle=0;cycle<3;++cycle) {
+        const int expected=(choice_at(M_IMAGE_FILTER)+1)%3;
+        click(5+kRenderScaleCount);
+        if(choice_at(M_IMAGE_FILTER)!=expected || vdp1_render_scale()!=5 || picture.px!=initial_pixels)return 101;
+    }
+    for(int i=0;i<6+kRenderScaleCount;++i) {
         auto a=replay_bar_button(i);
         if(a.x<0 || a.x+a.w>g_out_w)return 43;
         if(i && replay_bar_button(i-1).x+replay_bar_button(i-1).w>a.x)return 44;
