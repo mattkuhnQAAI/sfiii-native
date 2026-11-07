@@ -7,6 +7,19 @@
 #include <map>
 
 namespace sf3 {
+struct VertexProducerProfile {uint32_t size,crc,formatter,queue,projection;uint64_t projection_hash;};
+inline const VertexProducerProfile* vertex_producer_profile(uint32_t base,uint32_t size,uint32_t crc) {
+    static constexpr VertexProducerProfile profiles[]={
+        {123940,0xCC57FA60,0x06016A38,0x06015FEC,0x06015E12,0xACC79B5D28DDFB5Cull},
+        {123872,0x40B12530,0x060169F0,0x06015F9C,0x06015DC2,0x1DCE2733D8154C3Cull}
+    };
+    if(base!=0x06004000)return nullptr;
+    for(const auto& profile:profiles)if(profile.size==size && profile.crc==crc)return &profile;
+    return nullptr;
+}
+inline bool scenario2_vertex_formatter_entry(uint32_t address,uint32_t base=0x06016A38) {
+    return address==base || address==base+12 || address==base+20;
+}
 struct ProjectedPoint { uint32_t packed; int32_t x,y,z; };
 inline bool recover_projected_point(const ProjectedPoint& p,int32_t projection,unsigned near_shift,
                                     std::array<float,2>& result) {
@@ -31,6 +44,19 @@ inline bool recover_projected_point(const ProjectedPoint& p,int32_t projection,u
 }
 using VertexCommandKey=std::array<uint16_t,13>;
 struct PrecisionQuad {std::array<float,8> precise;std::array<uint32_t,4> packed;};
+inline bool order_precision_quad(const PrecisionQuad& source,const std::array<uint32_t,4>& corners,PrecisionQuad& result) {
+    PrecisionQuad ordered{};
+    for(int i=0;i<4;++i) {
+        int pick=-1;
+        for(int j=0;j<4;++j)if(source.packed[j]==corners[i]) {
+            if(pick>=0 && (source.precise[pick*2]!=source.precise[j*2] || source.precise[pick*2+1]!=source.precise[j*2+1]))return false;
+            pick=j;
+        }
+        if(pick<0)return false;
+        ordered.packed[i]=corners[i];ordered.precise[i*2]=source.precise[pick*2];ordered.precise[i*2+1]=source.precise[pick*2+1];
+    }
+    result=ordered;return true;
+}
 class VertexCommandCache {
     struct Entry {PrecisionQuad quad;uint64_t field;bool ambiguous=false;};
     std::map<VertexCommandKey,Entry> entries_;

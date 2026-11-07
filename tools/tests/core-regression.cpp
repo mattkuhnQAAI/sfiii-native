@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <cstring>
+#include <vector>
 
 // Snapshot module-table interface, implemented in core.cpp.
 int sh2_active_slots();
@@ -17,7 +18,9 @@ extern const SH2Module* const g_sh2_modules[] = {
     &modules[15], &modules[16], &modules[17], &modules[18]};
 extern const int g_sh2_nmodules = 19;
 static int calls, starts;
-static void entry(SH2Context&) { ++calls; }
+static std::vector<int> presentation_events;
+void sf3_vertex_precision_call(SH2Context&,uint32_t,bool returned) {presentation_events.push_back(returned?2:0);}
+static void entry(SH2Context&) { presentation_events.push_back(1);++calls; }
 static void replacement(SH2Context&) { calls += 100; }
 static void check(bool yes, const char* why) { if (!yes) { std::fprintf(stderr, "%s\n", why); std::exit(1); } }
 void sh2_program_start(SH2Context&, uint32_t) { ++starts; }
@@ -84,6 +87,8 @@ int main() {
     check(sh2_identify(modules[0].base) == nullptr, "whole-image CRC must notice mutation");
     SH2Context cpu{};
     sh2_call(cpu, modules[0].base);
+    check(presentation_events==std::vector<int>({0,1,2}),"presentation observer must see entry, callee, then return");
+    presentation_events.clear();
     check(calls == 1 && starts == 0, "active returning module must not become a program restart after data mutation");
     check(sh2_mem_write(modules[12].base, newer, 8), "load overlapping replacement");
     sh2_call(cpu, modules[12].base);

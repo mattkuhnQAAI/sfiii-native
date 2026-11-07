@@ -60,7 +60,7 @@ index 566fcfd..18c8628 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..6b05a74 100644
+index cb6af72..9123c10 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,8 +3,12 @@
@@ -157,13 +157,13 @@ index cb6af72..6b05a74 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,11 +213,53 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,13 +213,56 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
 -    if (SH2_UNLIKELY(is_base(addr)) && !inside_loaded_program(addr)) {
-+    extern void sf3_vertex_precision_call(SH2Context&,uint32_t) __attribute__((weak));
-+    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr);
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) __attribute__((weak));
++    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,false);
 +    static const char* probe = std::getenv("SF3_CALL_ADDRESS");
 +    static const char* path = std::getenv("SF3_CALL_DUMP");
 +    static const uint32_t probe_addr = probe ? std::strtoul(probe, nullptr, 16) : 0;
@@ -212,7 +212,10 @@ index cb6af72..6b05a74 100644
 +    if(widened) { st16(bounds+120,uint16_t(-213)); st16(bounds+124,213); }
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
++    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,true);
  }
+ 
+ // ---- the store watch ------------------------------------------------------------------------
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
 index feded39..d1b52fc 100644
 --- a/runtime/src/host/host.cpp

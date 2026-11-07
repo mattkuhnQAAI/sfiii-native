@@ -2,10 +2,25 @@
 #include "vertex-precision.h"
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 static void check(bool v,const char* why){if(!v){std::fprintf(stderr,"FAIL: %s\n",why);std::exit(1);}}
 static uint32_t packed(int x,int y){return uint32_t(uint16_t(x))<<16|uint16_t(y);}
 int main() {
     unsigned cases=0;
+    const auto* modern=sf3::vertex_producer_profile(0x06004000,123940,0xCC57FA60);
+    const auto* legacy=sf3::vertex_producer_profile(0x06004000,123872,0x40B12530);
+    check(modern && legacy && modern->formatter!=legacy->formatter && modern->queue!=legacy->queue,"each reviewed revision selects its own producer and return site");++cases;
+    for(auto* profile:{modern,legacy}) {
+        check(!sf3::vertex_producer_profile(0x06004002,profile->size,profile->crc) && !sf3::vertex_producer_profile(0x06004000,profile->size+1,profile->crc) && !sf3::vertex_producer_profile(0x06004000,profile->size,profile->crc^1),"profile requires exact base, length and CRC");
+        for(uint32_t delta:{0u,12u,20u})check(sf3::scenario2_vertex_formatter_entry(profile->formatter+delta,profile->formatter),"revision-relative formatter entries");++cases;
+    }
+    check(!sf3::vertex_producer_profile(0x06004000,117672,0xEBEEDDFA) && !sf3::vertex_producer_profile(0x06004000,124272,0xA9FE4141),"unreviewed scenarios remain disabled");++cases;
+    for(uint32_t address:{0x06016A38u,0x06016A44u,0x06016A4Cu}) {
+        check(sf3::scenario2_vertex_formatter_entry(address),"reviewed formatter entry accepted");
+        check(!sf3::scenario2_vertex_formatter_entry(address+1) && !sf3::scenario2_vertex_formatter_entry(address-2),"nearby code is not a formatter entry");++cases;
+    }
+    check(!sf3::scenario2_vertex_formatter_entry(0) && !sf3::scenario2_vertex_formatter_entry(0x26016A38),"unreviewed entry/mirror rejected by producer selector");++cases;
+    check(!sf3::scenario2_vertex_formatter_entry(0x06017144) && !sf3::scenario2_vertex_formatter_entry(0x06016A70),"other-edition formatter addresses require their own profile");++cases;
     for(int sign:{-1,1})for(int fraction:{0,8192,32768,57344}) {
         const int x=sign*(2*65536+fraction),y=sign*(3*65536+fraction);
         sf3::ProjectedPoint point{packed(int(std::floor(x/65536.0)),int(std::floor(y/65536.0))),x,y,8*65536};
@@ -28,6 +43,19 @@ int main() {
     check(sf3::vertex_command_key(a)==key,"relocated links and lighting table do not alter geometry key");++cases;
     for(int i:{2,3,4,5,6,7,8,9,10,11,12,13}){a[i]^=1;check(sf3::vertex_command_key(a)!=key,"material or corner changes invalidate correspondence");a[i]^=1;++cases;}
     a[0]^=0x10;check(sf3::vertex_command_key(a)!=key,"texture orientation is part of identity");++cases;
+    sf3::PrecisionQuad source{{1.25f,2.5f,3.75f,4.125f,5.5f,6.25f,7.125f,8.75f},{packed(1,2),packed(3,4),packed(5,6),packed(7,8)}};
+    std::array<int,4> permutation{0,1,2,3};
+    do {
+        std::array<uint32_t,4> corners{};for(int i=0;i<4;++i)corners[i]=source.packed[permutation[i]];
+        sf3::PrecisionQuad ordered{};check(sf3::order_precision_quad(source,corners,ordered),"quad permutation resolves");
+        for(int i=0;i<4;++i)check(ordered.packed[i]==corners[i] && ordered.precise[i*2]==source.precise[permutation[i]*2] && ordered.precise[i*2+1]==source.precise[permutation[i]*2+1],"fraction follows its vertex through rotations and winding changes");++cases;
+    }while(std::next_permutation(permutation.begin(),permutation.end()));
+    auto corners=source.packed;corners[0]=packed(99,99);auto retained=source;
+    check(!sf3::order_precision_quad(source,corners,retained) && retained.precise==source.precise && retained.packed==source.packed,"missing corner keeps destination unchanged");++cases;
+    source.packed[1]=source.packed[0];corners=source.packed;
+    check(!sf3::order_precision_quad(source,corners,retained),"same integer point with conflicting fractions is ambiguous");++cases;
+    source.precise[2]=source.precise[0];source.precise[3]=source.precise[1];
+    check(sf3::order_precision_quad(source,corners,retained),"identical shared point is consistent");++cases;
     sf3::VertexCommandCache cache;sf3::PrecisionQuad first{},second{};
     first.precise[0]=.25f;second.precise[0]=.75f;
     cache.store(key,first,100);cache.store(key,first,100);
