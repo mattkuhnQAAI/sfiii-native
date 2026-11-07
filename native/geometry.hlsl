@@ -109,6 +109,59 @@ float4 ray_shadow(Input input,float4 base) {
     }
     return float4(base.rgb*(1.0-strength),1);
 }
+uint rotation_byte(uint base,uint address) {address&=0x7FFFF;return (T(base+address/4)>>((address&3)*8))&255;}
+uint rotation_word(uint base,uint address) {address&=0x7FFFE;return rotation_byte(base,address)*256+rotation_byte(base,address+1);}
+bool rotation_sample(uint info,float2 position,out uint color) {
+    color=0;uint d=S(info),rows=S(info+1),memory=S(info+2),palette=S(info+3),height=S(info+4);
+    float y=clamp(position.y,0.0,float(height));uint row=min(uint(y),height-1);
+    float4 a=asfloat(uint4(S(rows+row*4),S(rows+row*4+1),S(rows+row*4+2),S(rows+row*4+3)));
+    float4 b=asfloat(uint4(S(rows+(row+1)*4),S(rows+(row+1)*4+1),S(rows+(row+1)*4+2),S(rows+(row+1)*4+3)));
+    float2 uv=lerp(a.xy+a.zw*position.x,b.xy+b.zw*position.x,y-row);
+    if(any(isnan(uv)) || any(isinf(uv)) || any(abs(uv)>4194304))return false;
+    uint2 map_point=uint2(int2(floor(uv)));uint mw=S(d+11),mh=S(d+12),over=S(d+13),flags=S(d);
+    bool outside=over==3?((map_point.x|map_point.y)&~511u)!=0:over!=0 && ((map_point.x&~(mw-1))!=0 || (map_point.y&~(mh-1))!=0);
+    if(outside && (over&2))return false;
+    map_point&=uint2(mw-1,mh-1);
+    uint colors=S(d+1),base=0,pal=0,index=0;
+    if(flags&1) {base=S(d+8);pal=S(d+9);index=map_point.y*S(d+6)+map_point.x;}
+    else {
+        uint pw=S(d+3)*512,ph=S(d+4)*512,cs=(flags&2)?16:8;
+        uint2 local=map_point%uint2(pw,ph);uint page=local.y/512*S(d+3)+local.x/512;
+        uint tile=(local.y%512)/cs*(512/cs)+(local.x%512)/cs;
+        uint address=S(d+16+(map_point.y/ph)*4+map_point.x/pw)+page*S(d+5)+tile*((flags&4)?2:4);
+        uint chr=0,supp=S(d+2);bool hf=false,vf=false;
+        if((flags&4) || outside) {
+            uint w=outside?S(d+14):rotation_word(memory,address);
+            pal=colors==0?((w>>12)&15)|((supp>>1)&0x70):(w>>8)&0x70;
+            if(!(flags&8)) {
+                hf=(w&0x400)!=0;vf=(w&0x800)!=0;
+                chr=(flags&2)?((w&0x3FF)<<2)|(supp&3)|((supp&0x1C)<<10):(w&0x3FF)|((supp&0x1F)<<10);
+            } else chr=(flags&2)?((w&0xFFF)<<2)|(supp&3)|((supp&0x10)<<10):(w&0xFFF)|((supp&0x1C)<<10);
+        } else {
+            uint w=rotation_word(memory,address);hf=(w&0x4000)!=0;vf=(w&0x8000)!=0;
+            pal=w&0x7F;chr=rotation_word(memory,address+2)&0x7FFF;
+        }
+        uint2 pixel=local%cs;if(hf)pixel.x=cs-1-pixel.x;if(vf)pixel.y=cs-1-pixel.y;
+        base=chr*32;
+        if(flags&2)base+=(pixel.y/8*2+pixel.x/8)*(colors==0?32:colors==1?64:128);
+        index=(pixel.y&7)*8+(pixel.x&7);
+    }
+    if(colors==3) {
+        uint raw=rotation_word(memory,base+index*2);
+        color=(raw&31)*8<<16|((raw>>5)&31)*8<<8|((raw>>10)&31)*8;return true;
+    }
+    uint value=colors==0?rotation_byte(memory,base+index/2):colors==1?rotation_byte(memory,base+index):rotation_word(memory,base+index*2)&0x7FF;
+    if(colors==0)value=(index&1)?value&15:value>>4;
+    uint entry=colors==0?pal*16+value:colors==1?(pal&0x70)*16+value:value;
+    color=T(palette+((entry+S(d+10))&2047));return true;
+}
+uint rotation_offset(uint info,uint color) {
+    uint result=0;
+    [unroll]for(int channel=0;channel<3;++channel) {
+        uint shift=16-channel*8;result|=uint(clamp(int((color>>shift)&255)+int(S(info+5+channel)),0,255))<<shift;
+    }
+    return result;
+}
 float4 main(Input input):SV_Target {
     if(aa_pass!=0) {
         float4 base=(aa_pass&1)!=0?edge_aa(input):picture.Load(int3(uint2(input.position.xy),0));
@@ -117,6 +170,19 @@ float4 main(Input input):SV_Target {
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
     uint p=S(4)+(cell.y*w+cell.x)*10,mode=S(p+3);
     if(mode&0x100)return output_color(S(p));
+    uint native_color=S(p),absent=S(p+1),fixed=S(p+2),rotation=S(p+9),info=S(11);
+    if(info!=0 && rotation!=0 && scale>1) {
+        uint original=0,enhanced=0;
+        float2 center=float2(int2(cell)-int2(int(S(9)),0));
+        float2 sample_position=(float2(pixel)+.5)/scale-.5-float2(int(S(9)),0);
+        // Retain native pixels when format/precision cannot reproduce the CPU sample.
+        if(rotation_sample(info,center,original) && original==(rotation&0xFFFFFF) && rotation_sample(info,sample_position,enhanced)) {
+            uint roles=rotation>>24,offset_color=rotation_offset(info,enhanced);
+            if(roles&1)native_color=offset_color;
+            if(roles&2)absent=offset_color;
+            if(roles&4)fixed=(roles&8)?offset_color:enhanced;
+        }
+    }
     uint tile=S(10);
     uint bin=S(6)+(cell.y/tile*S(8)+cell.x/tile)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
     int origin=int(S(9));int2 native_cell=int2(cell)-int2(origin,0);
@@ -125,10 +191,10 @@ float4 main(Input input):SV_Target {
         uint id=S(start+i-1),q=S(5)+id*40;
         if(sample_quad(q,position,native_cell,color)){found=true;break;}
     }
-    if(!found)return output_color(S(p+8)!=0?S(p+1):S(p));
-    if(color&0x1000000)return output_color(S(p+1));
-    if(mode==0)return output_color(S(p+2));
-    uint fixed=S(p+2),ratio=S(p+4),result=0;
+    if(!found)return output_color(S(p+8)!=0?absent:native_color);
+    if(color&0x1000000)return output_color(absent);
+    if(mode==0)return output_color(fixed);
+    uint ratio=S(p+4),result=0;
     [unroll]for(int channel=0;channel<3;++channel) {
         int sh=16-channel*8;uint a=(color>>sh)&255,b=(fixed>>sh)&255,c=a;
         if(mode==2)c=(a*(31-ratio)+b*(ratio+1))>>5;

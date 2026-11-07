@@ -104,6 +104,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         if(geometry) {
             const auto& e=f.hd->composition[i];data[at+1]=e.absent;data[at+2]=e.constant;data[at+3]=e.mode;data[at+4]=e.ratio;
             for(int c=0;c<3;++c)data[at+5+c]=uint32_t(e.offset[c]);data[at+8]=e.owner;
+            if(f.rotation && scale>1)data[at+9]=e.rotation;
         }
     }
     // End codes terminate a source row. Resolve the two directions once per
@@ -150,6 +151,16 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     for(uint32_t i=0;i<bins.size();++i) {
         data[bin_at+2*i]=uint32_t(data.size());data[bin_at+2*i+1]=uint32_t(bins[i].size());
         data.insert(data.end(),bins[i].begin(),bins[i].end());
+    }
+    if(f.rotation && scale>1 && f.rotation->rows.size()==size_t(f.h+1)*4 &&
+       f.rotation->vram.size()==0x20000 && f.rotation->palette.size()==2048) {
+        const auto& r=*f.rotation;const uint32_t base=uint32_t(data.size());data[11]=base;
+        data.resize(base+40+r.rows.size());data[base]=base+8;data[base+1]=base+40;
+        data[base+2]=uint32_t(tex.size());tex.insert(tex.end(),r.vram.begin(),r.vram.end());
+        data[base+3]=uint32_t(tex.size());tex.insert(tex.end(),r.palette.begin(),r.palette.end());data[base+4]=f.h;
+        for(int i=0;i<3;++i)data[base+5+i]=uint32_t(r.offset[i]);
+        std::copy(r.descriptor,r.descriptor+32,data.begin()+base+8);
+        std::memcpy(data.data()+base+40,r.rows.data(),r.rows.size()*sizeof(float));
     }
     if(data.size()*4>capacity || tex.size()*4>capacity){SDL_SetError("GPU geometry scene exceeds buffer capacity");return nullptr;}
     // Exact packed inputs include pixels, clipping, effects, geometry, source

@@ -182,6 +182,67 @@ int main(int argc,char** argv) {
             check(rendered(gpu,f,scale).px==off.px,"Ray shadow Off did not restore exact pixels");
             ++cases;
         }
+        // Opaque rotation-plane samples become genuinely finer, preserving 1x
+        // and exact native centers while traversing source texels and map edges.
+        for(int colors:{0,1,2,3})for(bool bitmap:{false,true})for(bool flip:{false,true}) {
+            auto f=fixture(4,4);auto r=std::make_shared<GpuRotation>();f.rotation=r;
+            auto* d=r->descriptor;d[0]=(bitmap?1:0)|4;d[1]=colors;d[3]=d[4]=1;
+            d[5]=0x2000;d[6]=512;d[7]=256;d[11]=bitmap?512:2048;d[12]=bitmap?256:2048;
+            for(int i=0;i<16;++i)d[16+i]=0x40000;
+            r->palette.resize(2048);r->vram.resize(0x20000);r->rows.resize(20);
+            const uint16_t rgb[]={0x801F,0x83E0,0xFC00,0xFFFF};
+            const uint32_t palette[]={0xF80000,0x00F800,0x0000F8,0xF8F8F8};
+            for(int i=0;i<4;++i)r->palette[i+1]=palette[i];
+            auto byte=[&](unsigned address,uint8_t value){auto& word=r->vram[(address&0x7FFFF)/4];unsigned sh=(address&3)*8;word=(word&~(255u<<sh))|uint32_t(value)<<sh;};
+            auto word=[&](unsigned address,uint16_t value){byte(address,value>>8);byte(address+1,value);};
+            for(unsigned y=0;y<(bitmap?256:8);++y)for(unsigned x=0;x<(bitmap?512:8);++x) {
+                unsigned i=y*(bitmap?512:8)+x;
+                if(colors==0) {if(!(i&1))byte(i/2,uint8_t(((x%4+1)<<4)|((x+1)%4+1)));}
+                else if(colors==1)byte(i,x%4+1);
+                else word(i*2,colors==2?uint16_t(x%4+1):rgb[x%4]);
+            }
+            if(!bitmap)for(unsigned i=0;i<0x2000;i+=2)word(0x40000+i,flip?0x400:0);
+            for(int y=0;y<5;++y){r->rows[y*4]=0;r->rows[y*4+1]=0;r->rows[y*4+2]=2;r->rows[y*4+3]=0;}
+            auto expected=[&](float x){int texel=int(std::floor(2*x));texel&=bitmap?511:7;if(!bitmap && flip)texel=7-texel;return palette[texel%4];};
+            for(int y=0;y<4;++y)for(int x=0;x<4;++x) {
+                f.px[y*4+x]=expected(float(x));auto& e=f.hd->composition[y*4+x];e.rotation=0x03000000|f.px[y*4+x];
+            }
+            check(rendered(gpu,f,1).px==f.px,"Rotation enhancement changed 1x output");
+            for(int scale:{2,4,5}) {
+                auto out=rendered(gpu,f,scale);
+                for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x)
+                    check(out.px[y*out.w+x]==expected((x+.5f)/scale-.5f),"Rotation map/bitmap texel sampling, flips or repeat boundary");
+                auto native=f.px;for(auto& e:f.hd->composition)e.rotation^=1;
+                out=rendered(gpu,f,scale);for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x)
+                    check(out.px[y*out.w+x]==native[(y/scale)*4+x/scale],"Rotation format guard did not retain native output");
+                for(auto& e:f.hd->composition)e.rotation^=1;
+                ++cases;
+            }
+            if(colors==1 && bitmap && !flip) {
+                r->offset[0]=-16;r->offset[1]=32;r->offset[2]=-64;
+                auto offset=[](uint32_t rgb){return uint32_t(std::clamp(int(rgb>>16&255)-16,0,255))<<16|
+                    uint32_t(std::clamp(int(rgb>>8&255)+32,0,255))<<8|uint32_t(std::clamp(int(rgb&255)-64,0,255));};
+                auto tinted=rendered(gpu,f,5);
+                for(int y=0;y<tinted.h;++y)for(int x=0;x<tinted.w;++x)
+                    check(tinted.px[y*tinted.w+x]==offset(expected((x+.5f)/5-.5f)),"Floor signed colour offsets and channel saturation");
+                f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));
+                for(unsigned mode:{2u,3u}) {
+                    for(auto& e:f.hd->composition){e.mode=mode;e.ratio=15;e.rotation=(e.rotation&0xFFFFFF)|0x04000000;}
+                    auto blended=rendered(gpu,f,5);
+                    for(int y=0;y<blended.h;++y)for(int x=0;x<blended.w;++x) {
+                        const auto floor=expected((x+.5f)/5-.5f);uint32_t want=0;
+                        for(int shift:{0,8,16}) {uint32_t a=0xFF0000>>shift&255,b=floor>>shift&255;
+                            want|=(mode==2?(a*16+b*16)>>5:std::min(a+b,255u))<<shift;}
+                        check(blended.px[y*blended.w+x]==want,"High-resolution floor must retain sprite colour-calculation order");
+                    }
+                    ++cases;
+                }
+                for(auto& e:f.hd->composition)e.mode=0x100;
+                auto protected_ui=rendered(gpu,f,5);
+                for(int y=0;y<protected_ui.h;++y)for(int x=0;x<protected_ui.w;++x)
+                    check(protected_ui.px[y*protected_ui.w+x]==f.px[(y/5)*4+x/5],"Native UI and unsupported effects must bypass floor enhancement");
+            }
+        }
         // Submit several differently sized/coloured frames without reading them
         // back yet. Reused transfer storage must not overwrite an in-flight
         // frame, including when its allocation grows between submissions.

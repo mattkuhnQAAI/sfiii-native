@@ -16,7 +16,7 @@
 #endif
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 18) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--wide] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5] [--gpu-scale 1|2|4|5]\n"); return 2; }
+    if (argc < 3 || argc > 20) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--wide] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5] [--gpu-scale 1|2|4|5] [--hires-backgrounds]\n"); return 2; }
     bool redraw=false, hd=false,wide=false;
     bool bench=false,raster_bench=false,require_replacements=false,require_characters=false;
     int gpu_scale=1;
@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
     for(int i=3;i<argc;++i) {
         if(std::string(argv[i])=="--redraw") redraw=true;
         else if(std::string(argv[i])=="--wide") wide=true;
+        else if(std::string(argv[i])=="--hires-backgrounds")vdp2_hires_backgrounds(true);
         else if(std::string(argv[i])=="--hd") hd=true;
         else if(std::string(argv[i])=="--assets" && i+1<argc) pack=argv[++i];
         else if(std::string(argv[i])=="--export-textures" && i+1<argc) export_textures=argv[++i];
@@ -51,7 +52,10 @@ int main(int argc, char** argv) {
     }
     vdp1_init();
     if(wide) {vdp1_gpu_available(true);vdp1_widescreen(true);}
-    vdp1_hd_collect(!pack.empty() || !export_textures.empty());
+    vdp1_hd_collect(!pack.empty() || !export_textures.empty() || gpu_scale>1);
+#ifdef SF3_GPU_DIAGNOSTIC
+    if(gpu_scale>1) {vdp1_gpu_available(true);vdp1_render_scale(gpu_scale);}
+#endif
     std::memcpy(g_vdp1_vram, bytes.data(), sizeof g_vdp1_vram);
     vdp1_reg_write(0, (bytes[0xc0000] << 8) | bytes[0xc0001], 2);
     if (redraw) {
@@ -131,7 +135,24 @@ int main(int argc, char** argv) {
     };
     const auto initial_guest_video=guest_video();const auto initial_pixels=frame.px;
     if(initial_guest_video.empty()) {std::fprintf(stderr,"Guest video snapshot unavailable\n");return 18;}
-    if(pack.empty() || !SDL_Init(SDL_INIT_VIDEO)) return 3;
+    if(!SDL_Init(SDL_INIT_VIDEO))return 3;
+    if(pack.empty()) {
+        sf3::GpuRenderer renderer;auto* sdl=renderer.create_renderer(nullptr);
+        if(!sdl || !renderer.initialize(sdl,std::string(SDL_GetBasePath())+"shaders"))return 4;
+        auto* scratch=SDL_CreateTexture(sdl,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,16,16);
+        if(!scratch || !SDL_SetRenderTarget(sdl,scratch))return 5;
+        if(!renderer.render(frame,gpu_scale)) {std::fprintf(stderr,"Render failed: %s\n",SDL_GetError());return 5;}
+        Frame result;if(!renderer.capture(result))return 6;write_png(argv[2],result);
+        size_t eligible=0;if(frame.hd)for(auto p:frame.hd->composition)eligible+=p.rotation!=0;
+        std::printf("GPU %s: %s; %dx%d; rotation metadata %s; %zu eligible native pixels\n",renderer.backend(),renderer.adapter(),result.w,result.h,frame.rotation?"present":"unavailable",eligible);
+        if(bench) {
+            auto start=std::chrono::steady_clock::now();
+            for(int i=0;i<10;++i) {frame.px[0]^=1;if(!renderer.render(frame,gpu_scale) || !renderer.wait())return 7;Frame done;if(!renderer.capture(done))return 8;}
+            std::printf("GPU redraw + upload + diagnostic readback: %.2f ms/frame\n",std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/10);
+        }
+        if(guest_video()!=initial_guest_video)return 21;
+        renderer.release();SDL_SetRenderTarget(sdl,nullptr);SDL_DestroyTexture(scratch);SDL_DestroyRenderer(sdl);renderer.destroy_device();SDL_Quit();return 0;
+    }
     sf3::GpuRenderer native;auto* renderer=native.create_renderer(nullptr);
     sf3::HdGpu gpu;
     std::string shader_dir=std::string(SDL_GetBasePath())+"shaders";

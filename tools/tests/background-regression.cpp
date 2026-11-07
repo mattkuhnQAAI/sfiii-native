@@ -343,6 +343,30 @@ TEST(widescreen_rotation_floor_extends_viewport_windows_but_preserves_masks_and_
     vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
 }
 
+TEST(hires_rotation_metadata_is_optional_cached_and_rejects_unsupported_planes) {
+    vdp1_init();vdp1_reg_write(0,0,2);vdp1_gpu_available(true);vdp1_render_scale(2);vdp1_hd_collect(true);
+    rotation_bitmap();reg16(0x20,0x1010);reg16(0xE0,0x20);reg16(0xFC,7);
+    vdp2_hires_backgrounds(false);Frame original;vdp2_compose(original);CHECK_EQ(bool(original.rotation),false);
+    vdp2_hires_backgrounds(true);Frame enhanced;vdp2_compose(enhanced);
+    CHECK_EQ(enhanced.px==original.px,true);CHECK_EQ(bool(enhanced.rotation),true);
+    CHECK_EQ(enhanced.rotation->descriptor[1],1u);CHECK_EQ(enhanced.rotation->rows.size(),size_t(225*4));
+    CHECK_EQ(enhanced.rotation->vram.size(),size_t(0x20000));CHECK_EQ(enhanced.rotation->palette[2],0x00F800u);
+    CHECK_EQ(enhanced.rotation->rows[2],1.0f);
+    Frame cached;vdp2_compose(cached);CHECK_EQ(cached.rotation==enhanced.rotation,true);
+    // Palette writes, offset writes, and coefficient state must invalidate metadata.
+    mem_wr(g_vdp2_cram,4,0x001F,2);reg16(0x110,0x10);reg16(0x114,0x1F0);
+    vdp2_compose(cached);CHECK_EQ(cached.rotation->palette[2],0xF80000u);CHECK_EQ(cached.rotation->offset[0],-16);
+    reg16(0x20,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Transparent plane.
+    reg16(0x20,0x1010);reg16(0xEC,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Floor colour calculation.
+    reg16(0xEC,0);reg16(0xEA,0x100);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Per-character priority.
+    reg16(0xEA,0);reg16(0xB0,3);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Window-selected parameters.
+    reg16(0xB0,0);reg16(0x0E,0x0310);reg16(0xB4,1);vr32(0x3FE5C,0x10000);
+    vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Per-dot coefficients.
+    vr32(0x3FE5C,0);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),true);
+    vdp2_hires_backgrounds(false);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false);
+    vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
+}
+
 TEST(native_state_restores_gpu_geometry_and_shared_textures) {
     vdp1_init();vdp1_gpu_available(true);vdp1_render_scale(2);vdp1_hd_collect(true);
     std::memset(g_vdp1_vram,0,sizeof g_vdp1_vram);
