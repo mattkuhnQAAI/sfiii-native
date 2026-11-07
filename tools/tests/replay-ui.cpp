@@ -57,9 +57,15 @@ int main(int argc, char** argv) {
     choose(M_IMAGE_FILTER,1);
     if(argc==3) {
         if(!g_gpu_active)return 97;
+        resolution_set(9);choose(M_SSAA,1);
+        Frame ssaa;if(!g_gpu.capture(ssaa) || ssaa.w!=2880 || ssaa.h!=2160 || g_gpu.active_supersampling()!=2)return 106;
+        for(auto p:ssaa.px)if(p!=0x102030)return 107;
+        load_settings(g_cfg.settings);
+        if(vdp1_render_scale()!=9 || choice_at(M_SSAA)!=1 || picture.px!=std::vector<uint32_t>(320*240,0x102030))return 108;
+        choose(M_SSAA,0);resolution_set(1);
         choose(M_VSYNC,1);if(choice_at(M_VSYNC)!=1 || !g_settings.flag("display","vsync"))return 98;
         draw(true);choose(M_VSYNC,0);if(choice_at(M_VSYNC)!=0)return 99;
-        std::printf("PASS: GPU fullscreen, toolbar, hidden click, preference persistence and VSync on/off (%s, %s)\n",g_gpu.backend(),g_gpu.adapter());
+        std::printf("PASS: GPU 2160p/SSAA, fullscreen, toolbar, hidden click, preference persistence and VSync on/off (%s, %s)\n",g_gpu.backend(),g_gpu.adapter());
         return 0;
     }
     SDL_Event event{};
@@ -76,7 +82,7 @@ int main(int argc, char** argv) {
     auto initial_pixels=picture.px;
     if(g_game_speed!=1 || !host_audio_open())return 46;
     for(int cycle=0;cycle<6;++cycle) {
-        click(7);int expected=cycle%3+2;if(expected==4)expected=1;
+        click(4+kRenderScaleCount);int expected=cycle%3+2;if(expected==4)expected=1;
         if(g_game_speed!=expected || SDL_GetAudioStreamFrequencyRatio(g_audio)!=expected ||
            SDL_GetAudioStreamQueued(g_audio)!=0 || g_audio_buffer.playing ||
            g_audio_buffer.speed!=expected || picture.px!=initial_pixels || vdp1_render_scale()!=1)return 47;
@@ -110,7 +116,11 @@ int main(int argc, char** argv) {
     click(5);
     if(vdp1_render_scale()!=2 || picture.px!=initial_pixels)return 20;
     click(6);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=2)return 41;
-    if(choice_count(M_RESOLUTION)!=3 || std::string(choice_name(M_RESOLUTION,2))!="5x")return 21;
+    if(choice_count(M_RESOLUTION)!=4 || std::string(choice_name(M_RESOLUTION,3))!="9x")return 21;
+    click(7);if(vdp1_render_scale()!=9 || picture.px!=initial_pixels)return 102;
+    choose(M_SSAA,1);if(choice_at(M_SSAA)!=1 || g_gpu.supersampling()!=2)return 103;
+    load_settings(g_cfg.settings);if(vdp1_render_scale()!=9 || choice_at(M_SSAA)!=1)return 104;
+    choose(M_SSAA,0);click(6);
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
     for(int cycle=0;cycle<3;++cycle) {
         const int expected=(choice_at(M_IMAGE_FILTER)+1)%3;
@@ -140,7 +150,7 @@ int main(int argc, char** argv) {
     click(3);
     if (!g_menu_open) return 6;
     auto layout = menu_layout();
-    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC,M_IMAGE_FILTER})
+    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC,M_IMAGE_FILTER,M_SSAA})
         if(std::none_of(layout.rows.begin(),layout.rows.end(),[&](const MenuRow& row){return row.id==id;}))return 91;
     bool save=false, load=false, has_capture=false;
     for (auto& row : layout.rows) { save |= row.id==M_REPLAY_SAVE; load |= row.id==M_REPLAY_LOAD; has_capture |= row.id==M_CAPTURE; }
@@ -158,6 +168,7 @@ int main(int argc, char** argv) {
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=5)return 29;
     {std::ofstream saved(g_cfg.settings);saved<<"[display]\ninternal_scale = 1\n";}
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 30;
+    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=9)return 105;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=1)return 31;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=2)return 32;
     upload_frame(picture);

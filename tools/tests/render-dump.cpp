@@ -16,15 +16,16 @@
 #endif
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 20) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--wide] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5] [--gpu-scale 1|2|4|5] [--hires-backgrounds]\n"); return 2; }
+    if (argc < 3 || argc > 21) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--wide] [--hd] [--assets PACK] [--export-textures DIR] [--bench] [--raster-bench] [--require-replacements] [--require-characters] [--render-scale 1|2|4|5|9] [--gpu-scale 1|2|4|5|9] [--hires-backgrounds] [--ssaa]\n"); return 2; }
     bool redraw=false, hd=false,wide=false;
-    bool bench=false,raster_bench=false,require_replacements=false,require_characters=false;
+    bool bench=false,raster_bench=false,require_replacements=false,require_characters=false,ssaa=false;
     int gpu_scale=1;
     std::string pack,export_textures;
     for(int i=3;i<argc;++i) {
         if(std::string(argv[i])=="--redraw") redraw=true;
         else if(std::string(argv[i])=="--wide") wide=true;
         else if(std::string(argv[i])=="--hires-backgrounds")vdp2_hires_backgrounds(true);
+        else if(std::string(argv[i])=="--ssaa")ssaa=true;
         else if(std::string(argv[i])=="--hd") hd=true;
         else if(std::string(argv[i])=="--assets" && i+1<argc) pack=argv[++i];
         else if(std::string(argv[i])=="--export-textures" && i+1<argc) export_textures=argv[++i];
@@ -34,12 +35,12 @@ int main(int argc, char** argv) {
         else if(std::string(argv[i])=="--require-characters") require_characters=true;
         else if(std::string(argv[i])=="--gpu-scale" && i+1<argc) {
             const std::string value=argv[++i];
-            if(value!="1" && value!="2" && value!="4" && value!="5")return 2;
+            if(value!="1" && value!="2" && value!="4" && value!="5" && value!="9")return 2;
             gpu_scale=std::stoi(value);
         }
         else if(std::string(argv[i])=="--render-scale" && i+1<argc) {
             const std::string value=argv[++i];
-            if(value!="1" && value!="2" && value!="4" && value!="5") return 2;
+            if(value!="1" && value!="2" && value!="4" && value!="5" && value!="9") return 2;
             vdp1_render_scale(std::stoi(value));
         }
         else return 2;
@@ -138,6 +139,7 @@ int main(int argc, char** argv) {
     if(!SDL_Init(SDL_INIT_VIDEO))return 3;
     if(pack.empty()) {
         sf3::GpuRenderer renderer;auto* sdl=renderer.create_renderer(nullptr);
+        renderer.supersampling(ssaa?2:1);
         if(!sdl || !renderer.initialize(sdl,std::string(SDL_GetBasePath())+"shaders"))return 4;
         auto* scratch=SDL_CreateTexture(sdl,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,16,16);
         if(!scratch || !SDL_SetRenderTarget(sdl,scratch))return 5;
@@ -154,6 +156,7 @@ int main(int argc, char** argv) {
         renderer.release();SDL_SetRenderTarget(sdl,nullptr);SDL_DestroyTexture(scratch);SDL_DestroyRenderer(sdl);renderer.destroy_device();SDL_Quit();return 0;
     }
     sf3::GpuRenderer native;auto* renderer=native.create_renderer(nullptr);
+    native.supersampling(ssaa?2:1);
     sf3::HdGpu gpu;
     std::string shader_dir=std::string(SDL_GetBasePath())+"shaders";
     if(!renderer || !native.initialize(renderer,shader_dir) || !gpu.initialize(renderer,assets,shader_dir)) {

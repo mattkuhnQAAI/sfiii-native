@@ -33,7 +33,43 @@ int main(int argc,char** argv) {
         check(scratch && SDL_SetRenderTarget(renderer,scratch),"Offscreen fixture render target");
         std::printf("GPU %s: %s\n",gpu.backend(),gpu.adapter());
         unsigned cases=0;
-        for(int scale:{2,4,5})for(bool hflip:{false,true})for(bool vflip:{false,true}) {
+        {
+            auto f=fixture();auto q=quad({0xFFFF},1,1,0,0,3,3);
+            q.xy[2]=3;q.xy[3]=1;q.xy[4]=2;q.xy[5]=3;q.xy[6]=0;q.xy[7]=2;
+            f.hd->quads.push_back(q);const auto native=f.px;
+            auto high=rendered(gpu,f,4),plain=rendered(gpu,f,2);
+            gpu.supersampling(2);auto smooth=rendered(gpu,f,2);
+            check(smooth.w==8 && smooth.h==8 && gpu.active_supersampling()==2,"SSAA resolved dimensions");
+            check(SDL_GetRenderTarget(renderer)==scratch,"SSAA restores caller render target");
+            unsigned changed=0;
+            for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
+                for(int sh:{0,8,16}) {
+                    unsigned sum=0;for(int dy=0;dy<2;++dy)for(int dx=0;dx<2;++dx)sum+=(high.px[(y*2+dy)*16+x*2+dx]>>sh)&255;
+                    const int value=int((smooth.px[y*8+x]>>sh)&255);
+                    check(std::abs(value-int((sum+2)/4))<=1,"SSAA must average four independently rendered samples");
+                }
+                changed+=smooth.px[y*8+x]!=plain.px[y*8+x];
+            }
+            check(changed>0 && f.px==native,"SSAA changes edge samples without mutating native data");
+            auto submissions=gpu.submissions();auto repeat=rendered(gpu,f,2);
+            check(repeat.px==smooth.px && gpu.submissions()==submissions,"SSAA cache reuses resolved result");
+            for(auto& p:f.hd->composition)p.mode=0x100;
+            auto fixed=rendered(gpu,f,9);check(fixed.w==36 && fixed.h==36,"9x output size with SSAA");
+            for(auto p:fixed.px)check(p==0x112233,"Native UI/effect samples remain exact under SSAA");
+            auto original=rendered(gpu,f,1);check(original.px==native && gpu.active_supersampling()==1,"Original disables SSAA");
+            gpu.supersampling(0);check(gpu.supersampling()==1,"Invalid SSAA setting returns Off");
+            auto restored=rendered(gpu,f,2);check(restored.w==8 && restored.h==8,"Resolved target restoration");
+            for(auto p:restored.px)check(p==0x112233,"Disabling SSAA retains native effect output");
+            ++cases;
+        }
+        {
+            auto large=fixture(512,256);for(auto& p:large.hd->composition)p.mode=0x100;
+            gpu.supersampling(2);auto* target=gpu.render(large,9);
+            check(target && gpu.supersampling()==2 && gpu.active_supersampling()==1,"SSAA sample budget retains requested resolution and preference");
+            float w=0,h=0;check(SDL_GetTextureSize(target,&w,&h) && w==4608 && h==2304,"Budget fallback retains 9x dimensions");
+            gpu.supersampling(1);++cases;
+        }
+        for(int scale:{2,4,5,9})for(bool hflip:{false,true})for(bool vflip:{false,true}) {
             auto f=fixture();auto q=quad({0x801F,0x83E0,0xFC00,0xFFFF},2,2,1,1,2,2);q.hflip=hflip;q.vflip=vflip;f.hd->quads.push_back(q);
             const auto original=f.px;auto out=rendered(gpu,f,scale);
             check(out.w==4*scale && out.h==4*scale,"Output dimensions");check(f.px==original,"GPU mutated native frame");
@@ -208,7 +244,7 @@ int main(int argc,char** argv) {
                 f.px[y*4+x]=expected(float(x));auto& e=f.hd->composition[y*4+x];e.rotation=0x03000000|f.px[y*4+x];
             }
             check(rendered(gpu,f,1).px==f.px,"Rotation enhancement changed 1x output");
-            for(int scale:{2,4,5}) {
+            for(int scale:{2,4,5,9}) {
                 auto out=rendered(gpu,f,scale);
                 for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x)
                     check(out.px[y*out.w+x]==expected((x+.5f)/scale-.5f),"Rotation map/bitmap texel sampling, flips or repeat boundary");

@@ -80,7 +80,16 @@ bool GpuRenderer::initialize(SDL_Renderer* renderer,const std::string& dir) {
     return true;
 }
 SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
-    if(!ready() || (scale!=1 && scale!=2 && scale!=4 && scale!=5) || f.w<1 || f.h<1 || f.w>1024 || f.h>512 || f.px.size()!=size_t(f.w)*f.h)return nullptr;
+    if(!ready() || (scale!=1 && scale!=2 && scale!=4 && scale!=5 && scale!=9) || f.w<1 || f.h<1 || f.w>1024 || f.h>512 || f.px.size()!=size_t(f.w)*f.h)return nullptr;
+    // Original stays exact. SSAA adds two samples per axis at enhanced settings,
+    // then resolves on the GPU to the requested internal dimensions.
+    int samples=scale>1?sample_axis_:1;
+    const int max_side=int(SDL_GetNumberProperty(SDL_GetRendererProperties(renderer_),SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER,8192));
+    if(samples>1 && (f.w*scale*samples>max_side || f.h*scale*samples>max_side ||
+       uint64_t(f.w)*f.h*scale*scale*samples*samples>40000000))samples=1;
+    if(active_sample_axis_!=samples){last_scene_.clear();resolved_valid_=false;active_sample_axis_=samples;}
+    const int output_width=f.w*scale,output_height=f.h*scale;
+    scale*=samples;
     const int width=f.w*scale,height=f.h*scale;
     if(width!=width_ || height!=height_) {
         last_scene_.clear();last_textures_.clear();
@@ -89,6 +98,17 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         output_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,width,height);
         if(!output_)return nullptr;
         width_=width;height_=height;SDL_SetTextureBlendMode(output_,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(output_,SDL_SCALEMODE_LINEAR);
+    }
+    if(samples==1 && resolved_){SDL_DestroyTexture(resolved_);resolved_=nullptr;resolved_valid_=false;}
+    if(samples>1) {
+        float rw=0,rh=0;if(resolved_)SDL_GetTextureSize(resolved_,&rw,&rh);
+        if(int(rw)!=output_width || int(rh)!=output_height) {
+            if(resolved_)SDL_DestroyTexture(resolved_);
+            resolved_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,output_width,output_height);
+            resolved_valid_=false;last_scene_.clear();
+            if(!resolved_)return nullptr;
+            SDL_SetTextureBlendMode(resolved_,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(resolved_,SDL_SCALEMODE_LINEAR);
+        }
     }
     const bool geometry=f.hd && f.hd->composition.size()==f.px.size();
     const size_t count=geometry?f.hd->quads.size():0;
@@ -165,7 +185,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     if(data.size()*4>capacity || tex.size()*4>capacity){SDL_SetError("GPU geometry scene exceeds buffer capacity");return nullptr;}
     // Exact packed inputs include pixels, clipping, effects, geometry, source
     // texels and dimensions. Repeated fields can reuse the completed picture.
-    if(data==last_scene_ && tex==last_textures_) {++cache_hits_;return filtered_valid_?filtered_:output_;}
+    if(data==last_scene_ && tex==last_textures_) {++cache_hits_;return resolved_valid_?resolved_:filtered_valid_?filtered_:output_;}
     if(!SDL_FlushRenderer(renderer_) || !upload(data,tex))return nullptr;
     auto* previous=SDL_GetRenderTarget(renderer_);
     if(!SDL_SetRenderTarget(renderer_,output_))return nullptr;
@@ -190,12 +210,21 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);
         if(!filtered_valid_){SDL_Log("GPU presentation effects unavailable: %s; original picture retained",SDL_GetError());aa_=false;ray_shadows_=false;}
     }
+    resolved_valid_=false;
+    if(ok && samples>1) {
+        if(SDL_SetRenderTarget(renderer_,resolved_)) {
+            // At exactly 2:1 this linear sample averages the four source texels.
+            auto* source=filtered_valid_?filtered_:output_;SDL_SetTextureScaleMode(source,SDL_SCALEMODE_LINEAR);
+            resolved_valid_=SDL_RenderTexture(renderer_,source,nullptr,nullptr);
+        }
+        SDL_SetRenderTarget(renderer_,previous);ok=resolved_valid_;
+    }
     if(ok) {last_scene_=std::move(data);last_textures_=std::move(tex);++submissions_;}
-    return ok?(filtered_valid_?filtered_:output_):nullptr;
+    return ok?(resolved_valid_?resolved_:filtered_valid_?filtered_:output_):nullptr;
 }
 bool GpuRenderer::capture(Frame& f) {
     if(!output_ || !SDL_FlushRenderer(renderer_))return false;
-    auto* previous=SDL_GetRenderTarget(renderer_);if(!SDL_SetRenderTarget(renderer_,filtered_valid_?filtered_:output_))return false;
+    auto* previous=SDL_GetRenderTarget(renderer_);if(!SDL_SetRenderTarget(renderer_,resolved_valid_?resolved_:filtered_valid_?filtered_:output_))return false;
     auto* surface=SDL_RenderReadPixels(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);if(!surface)return false;
     auto* rgb=SDL_ConvertSurface(surface,SDL_PIXELFORMAT_XRGB8888);SDL_DestroySurface(surface);if(!rgb)return false;
     f.w=rgb->w;f.h=rgb->h;f.hd.reset();f.px.resize(size_t(f.w)*f.h);
@@ -203,6 +232,6 @@ bool GpuRenderer::capture(Frame& f) {
     for(auto& p:f.px)p&=0xFFFFFF;SDL_DestroySurface(rgb);return true;
 }
 bool GpuRenderer::wait(){return device_ && SDL_WaitForGPUIdle(device_);}
-void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(filtered_)SDL_DestroyTexture(filtered_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);if(transfer_)SDL_ReleaseGPUTransferBuffer(device_,transfer_);}transfer_=nullptr;transfer_capacity_=0;state_=nullptr;white_=output_=filtered_=nullptr;filtered_valid_=false;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;}
+void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(filtered_)SDL_DestroyTexture(filtered_);if(resolved_)SDL_DestroyTexture(resolved_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);if(transfer_)SDL_ReleaseGPUTransferBuffer(device_,transfer_);}transfer_=nullptr;transfer_capacity_=0;state_=nullptr;white_=output_=filtered_=resolved_=nullptr;filtered_valid_=resolved_valid_=false;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;active_sample_axis_=1;}
 void GpuRenderer::destroy_device(){if(device_)SDL_DestroyGPUDevice(device_);device_=nullptr;}
 }

@@ -279,7 +279,7 @@ TEST(internal_resolution_retains_sprite_texels_flips_and_cpu_framebuffer_writes)
 
 TEST(internal_resolution_composition_dimensions_and_invalid_choices_are_bounded) {
     std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);
-    for(int scale : {1,2,4,5}) {
+    for(int scale : {1,2,4,5,9}) {
         vdp1_render_scale(scale);Frame frame;vdp2_compose(frame);
         CHECK_EQ(frame.w,320*scale);CHECK_EQ(frame.h,224*scale);
         CHECK_EQ(frame.px.size(),size_t(320*224*scale*scale));

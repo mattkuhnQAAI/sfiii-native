@@ -13,8 +13,10 @@ class GpuRenderer {
     uint32_t transfer_capacity_=0;
     SDL_GPUShader* shader_=nullptr;
     SDL_GPURenderState* state_=nullptr;
-    SDL_Texture *white_=nullptr,*output_=nullptr,*filtered_=nullptr;
+    SDL_Texture *white_=nullptr,*output_=nullptr,*filtered_=nullptr,*resolved_=nullptr;
     bool aa_=false,ray_shadows_=false,filtered_valid_=false;
+    bool resolved_valid_=false;
+    int sample_axis_=1,active_sample_axis_=1;
     int width_=0,height_=0;
     std::vector<uint32_t> last_scene_,last_textures_;
     uint64_t submissions_=0,cache_hits_=0;
@@ -23,6 +25,9 @@ public:
     SDL_Renderer* create_renderer(SDL_Window*);
     bool initialize(SDL_Renderer*,const std::string& shader_dir);
     SDL_Texture* render(const Frame&,int scale);
+    void supersampling(int axis) {axis=axis==2?2:1;if(sample_axis_!=axis){sample_axis_=axis;resolved_valid_=false;last_scene_.clear();}}
+    int supersampling()const{return sample_axis_;}
+    int active_supersampling()const{return active_sample_axis_;}
     void antialiasing(bool enabled) {if(aa_!=enabled){aa_=enabled;filtered_valid_=false;last_scene_.clear();}}
     bool antialiasing()const{return aa_;}
     void ray_shadows(bool enabled) {if(ray_shadows_!=enabled){ray_shadows_=enabled;filtered_valid_=false;last_scene_.clear();}}
