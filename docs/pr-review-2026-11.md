@@ -31,3 +31,5 @@ The local candidate passes the six required runtime regression targets, all 84 g
 All 16 retained gameplay routes pass against new generated executables for original/translated Scenario 1, supplied Scenario 2 V1.003 and translated Scenario 3, with no unexpected native-frame changes. Only external test copies of native states are identity-retagged; their payloads, initial internal/cartridge backups, clocks and inputs are preserved. Missing late-game crash routes and the seven new disc fixtures remain unavailable validation.
 
 The reported contributor timing/reference-match percentages are not maintainer measurements. Static compilation, emitted entries, executed gameplay and hardware fidelity remain separate claims. Neither these fixes nor the current route suite certify every transition, full campaigns, all translations or the Premium Disc.
+
+The MADRS bounds follow the 32-word register range in Sega's [SCSP User's Manual, Figure 4.5, page 31](https://antime.kapsi.fi/sega/files/ST-077-R2-052594.pdf#page=43). Synthetic reserved-address tests establish the runtime's behavior; they are separate from real-hardware audio comparisons.
