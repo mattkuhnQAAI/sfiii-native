@@ -1,8 +1,8 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..d9b71aa 100644
+index 1219a02..72b2ee6 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
-@@ -11,11 +11,17 @@
+@@ -11,6 +11,7 @@
  // Semantics are src/saturnrecomp/sh2emu.py's, instruction for instruction: the
  // self-test (runtime/src/app/selftest.cpp) holds the two together.
  #pragma once
@@ -10,17 +10,7 @@ index 1219a02..d9b71aa 100644
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
- 
- #define SH2_UNLIKELY(x) __builtin_expect(!!(x), 0)
-+#if defined(__APPLE__)
-+#define SH2_OPTIONAL_HOOK __attribute__((weak_import))
-+#else
-+#define SH2_OPTIONAL_HOOK __attribute__((weak))
-+#endif
- 
- struct SH2Context {
-     uint32_t r[16];
-@@ -60,6 +66,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
+@@ -60,6 +61,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
  #define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
@@ -70,14 +60,20 @@ index 566fcfd..18c8628 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..1314594 100644
+index cb6af72..32c8889 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,8 +3,12 @@
+@@ -3,8 +3,18 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
++#if defined(__APPLE__)
++// Mach-O core-only tools need definitions for optional presentation hooks.
++// The native host's strong definitions replace these fallbacks.
++__attribute__((weak)) void sf3_vertex_precision_call(SH2Context&, uint32_t, bool) {}
++__attribute__((weak)) bool vdp1_widescreen() { return false; }
++#endif
  #include <cstdio>
 +#include <cstdlib>
  #include <cstring>
@@ -86,7 +82,7 @@ index cb6af72..1314594 100644
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
  alignas(64) uint8_t g_wram_h[0x100000 + 8];
-@@ -113,42 +117,66 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +123,66 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -167,12 +163,12 @@ index cb6af72..1314594 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,13 +213,56 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,13 +219,56 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
 -    if (SH2_UNLIKELY(is_base(addr)) && !inside_loaded_program(addr)) {
-+    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) SH2_OPTIONAL_HOOK;
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) __attribute__((weak));
 +    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,false);
 +    static const char* probe = std::getenv("SF3_CALL_ADDRESS");
 +    static const char* path = std::getenv("SF3_CALL_DUMP");
@@ -206,7 +202,7 @@ index cb6af72..1314594 100644
 +    // recognizes the exact native viewport bounds and restores guest RAM as
 +    // soon as the visibility call returns. Other editions retain their normal
 +    // visibility behavior until independently reviewed.
-+    extern bool vdp1_widescreen() SH2_OPTIONAL_HOOK;
++    extern bool vdp1_widescreen() __attribute__((weak));
 +    const uint32_t bounds = c.gbr;
 +    const bool candidate = vdp1_widescreen && vdp1_widescreen() && addr == 0x0600C91C &&
 +        c.pr == 0x0603D7EC && bounds && (int16_t)ld16(bounds+120) == -160 &&
@@ -226,11 +222,11 @@ index cb6af72..1314594 100644
  }
  
  // ---- the store watch ------------------------------------------------------------------------
-@@ -224,6 +295,8 @@ void sh2_hook_add(uint32_t addr, SH2HookFn fn) {
+@@ -224,6 +301,8 @@ void sh2_hook_add(uint32_t addr, SH2HookFn fn) {
  }
  
  void sh2_hook(SH2Context& c, uint32_t addr) {
-+    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) SH2_OPTIONAL_HOOK;
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) __attribute__((weak));
 +    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,false);
      for (int i = 0; i < g_nhooks; ++i)
          if (g_hooks[i].addr == addr) {
@@ -2524,10 +2520,20 @@ index b9595ef..1c07383 100644
 +    if(!write_png_file(path,fr))sat_note("cannot write %s",path.c_str());
  }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..c3b549b 100644
+index 8589d33..99fbb03 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
-@@ -38,6 +38,7 @@
+@@ -33,11 +33,17 @@
+ #include "saturn.h"
+ #include "state.h"
+ #include "video.h"
++#if defined(__APPLE__)
++// Allow standalone video tools to link without the native presentation host.
++__attribute__((weak)) void sf3_vertex_precision_reset() {}
++__attribute__((weak)) bool sf3_vertex_precision_quad(const uint8_t*, float*) { return false; }
++#endif
+ #include <algorithm>
+ #include <array>
  #include <climits>
  #include <cmath>
  #include <cstdlib>
@@ -2535,7 +2541,7 @@ index 8589d33..c3b549b 100644
  #include <unordered_map>
  
  uint8_t g_vdp1_vram[0x80000];
-@@ -54,15 +55,69 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+@@ -54,15 +60,69 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
  static bool g_drawing;
  static uint64_t g_draw_end, g_frame_changes, g_draws;
  
@@ -2599,13 +2605,13 @@ index 8589d33..c3b549b 100644
  uint64_t vdp1_draws() { return g_draws; }
  
  void vdp1_init() {
-+    extern void sf3_vertex_precision_reset() SH2_OPTIONAL_HOOK;
++    extern void sf3_vertex_precision_reset() __attribute__((weak));
 +    if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
 +    ++g_presentation_epoch;
      g_reg[MODR] = 0x1000;                       // version 1
      g_reg[EDSR] = 0x0002;                       // the last draw has ended
  }
-@@ -94,6 +149,7 @@ struct Cmd {
+@@ -94,6 +154,7 @@ struct Cmd {
      uint16_t lut[16];
      Rgb g[4];                                   // A B C D
  };
@@ -2613,7 +2619,7 @@ index 8589d33..c3b549b 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +192,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -136,12 +197,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
  
@@ -2655,7 +2661,7 @@ index 8589d33..c3b549b 100644
 +    if(c.gouraud) for(int i=0;i<4;++i) {
 +        q.shade[i*3]=(c.g[i].r-16)*8.0f;q.shade[i*3+1]=(c.g[i].g-16)*8.0f;q.shade[i*3+2]=(c.g[i].b-16)*8.0f;
 +    }
-+    extern bool sf3_vertex_precision_quad(const uint8_t*,float*) SH2_OPTIONAL_HOOK;
++    extern bool sf3_vertex_precision_quad(const uint8_t*,float*) __attribute__((weak));
 +    if(q.gpu_eligible && g_precision_command && (c.ctrl&15)==2 && sf3_vertex_precision_quad)
 +        sf3_vertex_precision_quad(g_precision_command,q.xy);
 +    hd_fingerprint(scene.fingerprint,texture->fingerprint);
@@ -2682,7 +2688,7 @@ index 8589d33..c3b549b 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +268,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +273,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2701,7 +2707,7 @@ index 8589d33..c3b549b 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -211,6 +327,8 @@ static uint64_t g_draw_steps;
+@@ -211,6 +332,8 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2710,7 +2716,7 @@ index 8589d33..c3b549b 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +374,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +379,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2723,7 +2729,7 @@ index 8589d33..c3b549b 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +413,27 @@ struct RecFrame {
+@@ -289,6 +418,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2751,7 +2757,7 @@ index 8589d33..c3b549b 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +457,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +462,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2766,7 +2772,7 @@ index 8589d33..c3b549b 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +473,12 @@ static void draw() {
+@@ -320,6 +478,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2779,7 +2785,7 @@ index 8589d33..c3b549b 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +765,11 @@ static void erase(int which) {
+@@ -606,7 +770,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2792,7 +2798,7 @@ index 8589d33..c3b549b 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +839,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +844,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2822,7 +2828,7 @@ index 8589d33..c3b549b 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +880,42 @@ void vdp1_state(State& s) {
+@@ -707,4 +885,42 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2859,7 +2865,7 @@ index 8589d33..c3b549b 100644
 +    }
 +    if(s.loading) {
 +        ++g_presentation_epoch;g_hd_textures.clear();
-+        extern void sf3_vertex_precision_reset() SH2_OPTIONAL_HOOK;
++        extern void sf3_vertex_precision_reset() __attribute__((weak));
 +        if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
 +    }
 +    if(s.loading && g_render_scale>1) for(int p=0;p<2;++p)
