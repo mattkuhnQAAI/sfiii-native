@@ -87,11 +87,13 @@ def main():
     configure=[cmake,'-S',payload/'app/tools/tests','-B',checks,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
                '-DCMAKE_C_COMPILER='+str(payload/'compiler/bin/cc'),'-DCMAKE_CXX_COMPILER='+str(payload/'compiler/bin/c++'),
                '-DCMAKE_AR='+str(payload/'compiler/bin/ar'),'-DCMAKE_RANLIB='+str(payload/'compiler/bin/ranlib'),
-               '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),'-DSATURN_RUNTIME='+str(runtime)]
+               '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),'-DCMAKE_LINK_DEPENDS_USE_LINKER=OFF','-DSATURN_RUNTIME='+str(runtime)]
     check('configure-regressions',configure,compiler_env)
-    gates=['dsp_regression','core_regression','bup_regression','machine_regression','background_regression','audio_buffer']
+    gates=['dsp_regression','core_regression','bup_regression','machine_regression','background_regression','audio_buffer','runtime_tests','runtime_bench','overlay_state_regression']
     check('build-regressions',[cmake,'--build',checks,'--target',*gates,'--parallel','2'],compiler_env)
-    for gate in gates:check(gate,[checks/gate],required=False)
+    for gate in gates:
+        program=checks/'upstream'/gate if gate in {'runtime_tests','runtime_bench'} else checks/gate
+        check(gate,[program,*(['--quick'] if gate=='runtime_bench' else [])],required=False)
     source=out/'synthetic'
     # The upstream instruction fixtures are original synthetic code. Exercise the
     # real emitter and its generated CMake, with native-state safepoints enabled.

@@ -51,6 +51,9 @@ def configure_args(generated, build, payload=PAYLOAD):
             '-DCMAKE_AR='+str(payload/'compiler/bin/ar'),
             '-DCMAKE_RANLIB='+str(payload/'compiler/bin/ranlib'),
             '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),
+            # CMake may detect a system ld.lld and pass --dependency-file,
+            # which the bundled Zig linker rejects.
+            '-DCMAKE_LINK_DEPENDS_USE_LINKER=OFF',
             '-DSATURN_RUNTIME='+str(payload/'app/.local/saturn-recomp/runtime'),
             '-DSATURN_EXTRA='+str(payload/'app/tools/windows.cmake'),
             '-DCMAKE_PREFIX_PATH='+str(payload/'sdl'),

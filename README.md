@@ -2,7 +2,9 @@
 
 **Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
 
-## Latest improvements — v0.9.0
+**Source updates after v0.9.0:** reviewed community fixes improve memory mirrors, non-local returns, save-file flushing, overlay snapshot dispatch, scene callback discovery and composition/lookup caching. Seven additional exact disc profiles are experimental registrations. See the [PR review and validation limits](docs/pr-review-2026-11.md). These source updates are not yet in the v0.9.0 downloads below.
+
+## Latest release improvements — v0.9.0
 
 - **2160-line rendering and SSAA:** choose **1× / 2× / 5× / 9×** internal resolution, with optional **four-sample supersampling**. In a 240-line scene, 9× produces 2160 lines. Resolution and SSAA remain separate from window scaling and game speed.
 - **Five display filters:** **Nearest, Bilinear, Integer smooth, Bicubic and Lanczos**. Bicubic and Lanczos run on the GPU and support shrinking as well as enlargement. The toolbar cycles filters; the menu explains each choice.
@@ -29,7 +31,7 @@ Checksums and platform validation summaries accompany the release. Builds contai
 
 ## Registered game editions
 
-These **exact-content profiles** ship on all three platforms. Disc identification was checked locally for all six. A filename or translation-version label alone does not establish compatibility. Current Windows route checks cover four installed editions; the table distinguishes older gameplay evidence from current checks.
+Current source registers **13 exact-content profiles**. The v0.9.0 downloads contain the original six; the seven new contributor registrations require a subsequent application build. Disc identification was checked locally for the original six. A filename or translation-version label alone does not establish compatibility. Current Windows route checks cover four installed editions; new registrations are distinguished from locally tested discs.
 
 | Game and registered edition | Current Windows evidence |
 | --- | --- |
@@ -39,6 +41,10 @@ These **exact-content profiles** ship on all three platforms. Disc identificatio
 | Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. Current producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
 | Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight current routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
 | Scenario 3 — Translation Project v25.1 | Current title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
+| Scenario 2 — Translation Project v25.1 on V1.003 | New source-only exact profile from contributor PR #16. Contributor reports Linux audit/build/boot; this exact disc is unavailable in the maintainer suite. |
+| Scenario 2 — Translation Project v25.1 on V2.000 | New source-only exact profile from contributor PR #16, separate from the locally migrated image above. Local gameplay validation unavailable. |
+| Scenario 3 — Translation Project v25.1, Redump base | New source-only exact profile from contributor PR #16, separate from the previously supplied image. Local gameplay validation unavailable. |
+| V25.1 + V25+ default add-ons — Scenario 1 USA, Scenario 2 V1.003/V2.000, Scenario 3 Redump | Four new source-only exact profiles from contributor PR #19. Experimental; another add-on selection produces a different identity and remains unregistered. Maintainer disc/gameplay fixtures unavailable. |
 | Premium Disc / unregistered revisions | No profile. Deferred until separately identified and tested. |
 
 The launcher separates original USA Scenario 1, translated Scenario 1, translated Scenario 2 and translated Scenario 3, each with independent game-data paths. Unknown revisions produce a local `unregistered-disc.json` report without replacing progress or builds. Native compilation requires reviewed executable mappings for the exact image. Static compilation, emission, executed routes and hardware fidelity are separate claims.

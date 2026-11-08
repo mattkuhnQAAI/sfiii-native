@@ -47,6 +47,15 @@ int main() {
     check(sh2_mem_write(0x060FFFFC,across,8) && sh2_mem_read(0x260FFFFC,readback,8),"bulk RAM access across physical high-RAM mirror");
     for(int i=0;i<8;++i) check(readback[i]==across[i],"bulk mirror must retain every byte");
     check(!sh2_mem_read(0x00100000,readback,1),"unmapped bulk read rejected");
+    for(uint32_t offset:{0u,0x2468u,0xFFFFCu}) {
+        st32(0x00300000+offset,0x89ABCDEF);
+        check(ld32(0x00200000+offset)==0x89ABCDEF && ld32(0x20300000+offset)==0x89ABCDEF,"low-RAM mirror and cache-through agree at boundaries");
+        st16(0x20200000+offset,0x1234);
+        check(ld32(0x00300000+offset)==0x1234CDEF,"low-RAM mirrored widths retain byte order");
+    }
+    check(sh2_mem_write(0x002FFFFC,across,8) && sh2_mem_read(0x002FFFFC,readback,8),"bulk transfer crosses into low-RAM mirror");
+    for(int i=0;i<8;++i)check(across[i]==readback[i],"bulk low-RAM mirror retains bytes");
+    check(!sh2_mem_read(0x00400000,readback,1),"low-RAM mirror has an upper bound");
     for (unsigned i = 0; i < 12; ++i) {
         auto base = 0x06010000u + i * 0x100;
         uint8_t data[80];

@@ -170,10 +170,11 @@
       "file": "X006.BIN",
       "base": "06043D00",
       "seeds": [
-        "06043D00"
+        "06043D00",
+        "06044550"
       ],
       "overlay": true,
-      "evidence": "Entire 18856-byte image uniquely matches captured RAM at 06043D00 during boot. Loaded mapping verified; entry execution remains to be tested."
+      "evidence": "Entire 18856-byte image uniquely matches captured RAM at 06043D00 during boot. Loaded mapping verified; entry execution remains to be tested. Contributor PR #3 reports X1RYUTA calling the shared epilogue at 06044550 from 060602C0. That scene route has not been executed in the maintainer suite."
     },
     {
       "name": "X008",
