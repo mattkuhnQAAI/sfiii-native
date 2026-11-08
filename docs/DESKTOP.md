@@ -1,12 +1,12 @@
 # Automatic Windows preparation
 
-## v0.8.0
+## v0.9.0
 
-Download [**SFIII-Native-0.8.0-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), extract the complete ZIP to a new application folder and open **SFIII Native.exe**. Players do not install a compiler or enter build commands. Choose your supported disc and separate scenario data folder, then **Prepare game** and **Play**. If updating, prepare against your existing scenario data folder to retain ordinary saves; keep the old application and build for their build-specific quick states.
+Download [**SFIII-Native-0.9.0-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-win64.zip), extract the complete ZIP to a new application folder and open **SFIII Native.exe**. Players do not install a compiler or enter build commands. Choose your supported disc and separate scenario data folder, then **Prepare game** and **Play**. If updating, prepare against your existing scenario data folder to retain ordinary saves; keep the old application and build for their build-specific quick states.
 
-This Windows release adds a 16:9 mode for the registered Scenario 1–3 editions, optional locally generated world/character artwork, three selectable AI styles, indexed artwork startup and launcher attachment controls. Rendering choices are **1× / 2× / 5×**; the earlier AA and ray-shadow menu rows are hidden. Original artwork is available without downloading the optional builder. Widescreen is supported with original graphics only in this release: use **AI graphics > Off** because AI artwork can misalign or pop in at 16:9. See [optional graphics setup](#optional-graphics-builder).
+This release adds **9×/2160-line rendering**, optional four-sample SSAA, five display filters including GPU Bicubic/Lanczos, vertex precision, sharper supported backgrounds, fullscreen/toolbar/VSync controls and smoother audio. It retains original-graphics 16:9, optional artwork, indexed pack loading, controller setup and save import/export. Rendering choices are **1× / 2× / 5× / 9×**. Use **AI graphics > Off** with 16:9 because optional artwork can misalign or pop in. See [release notes](release-v0.9.0.md) and [optional graphics setup](#optional-graphics-builder).
 
-Linux users can use the Linux x64 archive attached to [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0), subject to the validation limits in [POSIX setup](POSIX.md). macOS is not included in this release; Intel Mac packages are no longer published. Windows AI rendering/gameplay checks do not establish Linux AI gameplay compatibility. The optional builder download is Windows x64 only.
+Linux x64 and Apple Silicon macOS archives are attached to [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0), subject to the validation limits in [portable setup](POSIX.md). Intel Mac is excluded. Windows gameplay checks do not establish Linux/macOS gameplay compatibility. The optional builder remains Windows x64 only.
 
 ## v0.5.0-alpha additions
 

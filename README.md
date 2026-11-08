@@ -1,219 +1,107 @@
 # Shining Force III Recomp — Scenarios 1, 2 & 3
 
-**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for the original USA Scenario 1 and selected translated revisions of Scenarios 1–3. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; an experimental Linux x64 package is built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services.
+**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
 
-## Latest improvements and highlights
+## Latest improvements — v0.9.0
 
-The local display-development branch adds **9x rendering / 2160 lines**, optional **4-sample SSAA**, fullscreen and toolbar controls, five display filters including GPU **Bicubic and Lanczos**, sharper supported rotating backgrounds, and guarded vertex precision for registered Scenario 1–3 BOOT families. Recent work reduces perspective-reciprocal stepping, implements extended background colour calculation and line scroll/zoom, and keeps audio supplied when presentation falls behind. Vertex precision and sharper backgrounds have saved menu switches. Earlier camera-angle/transform quantization and several hardware paths remain unresolved. These additions are **not yet in the published v0.8.0 downloads**. See [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks).
+- **2160-line rendering and SSAA:** choose **1× / 2× / 5× / 9×** internal resolution, with optional **four-sample supersampling**. In a 240-line scene, 9× produces 2160 lines. Resolution and SSAA remain separate from window scaling and game speed.
+- **Five display filters:** **Nearest, Bilinear, Integer smooth, Bicubic and Lanczos**. Bicubic and Lanczos run on the GPU and support shrinking as well as enlargement. The toolbar cycles filters; the menu explains each choice.
+- **Reduced vertex and camera-depth stepping:** guarded vertex precision recovers fractional projected positions for reviewed Scenario 1–3 BOOT families. Higher-precision perspective division reduces another source of stepping as depth changes. Earlier camera-angle, object-transform and keyframe rounding remain unresolved.
+- **Sharper supported backgrounds:** enhanced sampling for eligible rotation floors, transparent-plane interiors and RGB888 sources, with ordinary floor blending and signed colour offsets. Native composition now implements extended colour calculation and line scroll/zoom used in captured game scenes. Complex background paths still retain native sampling or remain unresolved.
+- **Smoother audio:** presentation catches up on repeated VDP1 fields while retaining new world draws and every game/audio step. Device read-ahead no longer causes unnecessary playback restarts. Capture PNG encoding runs in a bounded background worker.
+- **Better display controls:** fullscreen in the menu, F11/Alt+Enter, saved VSync, and an Auto/Shown/Hidden toolbar with F10 access.
+- **Apple Silicon Mac package:** alongside Windows x64 and Linux x64. Intel Mac is excluded. Platform build and synthetic tests are separate from real-disc gameplay validation.
 
-The v0.8.0 release includes the following. See the [v0.8.0 release notes](docs/release-v0.8.0.md) for its package and validation summary:
+See the [v0.9.0 release notes](docs/release-v0.9.0.md), [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks). **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
 
-- **Official widescreen support:** the registered Scenario 1–3 profiles expose a 16:9 option with GPU rendering, and Windows hybrid-GPU laptops request the high-performance GPU before SDL starts. The supported presentation for this release is **original game graphics**; turn **AI graphics** to **Off** when using 16:9. AI artwork remains an optional experiment and can misalign or pop in widescreen.
+## Downloads
 
-- **Smoother module transitions:** repeated identification of overlays sharing a loading address is avoided within each search. In one Scenario 2 volcano trace, a lookup fell from about 116 ms to under 2 ms; other stutters remain.
-- **Artwork performance and caching:** incremental GPU uploads reduce repeated work, and the CPU artwork cache grows on PCs with more memory. Artwork is loaded on demand; a larger cache helps only when previously used textures would otherwise be evicted.
-- **Adaptive audio recovery:** playback starts with a 100 ms cushion and increases to 150 ms after repeated underruns. This can reduce interruptions at the cost of up to 50 ms additional audio latency; it cannot correct sustained slow rendering.
-- **Clearer artwork choices:** the game menu and builder use **Animated**, **Illustrated** and **General**, with **Off** in the game. These select artwork styles rather than changing animation speed. Existing packs and saved settings remain compatible.
-- **Gameplay features:** local game preparation, controller setup, save import/export, native quick states, 1×/2×/5× rendering, experimental widescreen and optional locally generated artwork. See [Features](#features) and [Screenshots](#screenshots).
+The latest release is [**v0.9.0**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
 
-These optimizations are shared runtime code intended for Scenarios 1–3. The latest gameplay and performance checks cover selected Windows Scenario 2 routes; they have **not** been revalidated across the other scenarios or whole campaigns. [See validation details](#status-and-validation).
-
-## Current status — November 2026
-
-**The project is playable in tested Windows routes and remains an experimental native port.** The latest published release is [**v0.8.0**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0). Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
-
-| Component | Available now | Validation status |
+| Platform | Download | Validation scope |
 | --- | --- | --- |
-| Windows x64 application | [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), with automatic local game preparation | Recorded gameplay routes, limited native-state continuations and original-graphics widescreen cases tested locally. |
-| Optional graphics builder | [Separate Windows download](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip), about 22 MB | Automatic setup, all three registered discs and three GPU styles tested with limited samples; in-game artwork validation is focused on Scenario 2. Do not rely on AI graphics in widescreen. |
-| Linux x64 | [v0.8.0 package](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) | Built and synthetically tested. Real-disc gameplay, widescreen and AI graphics remain unvalidated. |
-| macOS | Not included in this release | Intel Mac packages are no longer published. An Apple Silicon package is omitted until a hosted build is available. |
+| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-win64.zip) | Local gameplay routes, GPU/display tests, audio-device checks and limited native-state continuations. |
+| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
+| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
+| Optional Windows graphics builder | [Separate builder ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip) | Builds experimental artwork locally from your own discs. In-game artwork checks are strongest in Scenario 2; AI widescreen remains unsupported. |
 
-Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
+Checksums and platform validation summaries accompany the release. Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required by this runtime. Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
-Older artwork packs and settings retain their internal identifiers and remain compatible with the new style labels.
+## Registered game editions
 
-### Registered game editions
+These **exact-content profiles** ship on all three platforms. Disc identification was checked locally for all six. A filename or translation-version label alone does not establish compatibility. Current Windows route checks cover four installed editions; the table distinguishes older gameplay evidence from current checks.
 
-The v0.8.0 release includes the following **exact-content profiles** on Windows and Linux. Disc identification was checked locally for all six; 16:9 is exposed for each profile. Widescreen is intended for original graphics only in this release; local widescreen gameplay evidence is currently strongest for the supplied Scenario 2 V1.003 image on Windows.
+| Game and registered edition | Current Windows evidence |
+| --- | --- |
+| Scenario 1 — USA MK-81383 V1.001, unpatched | Current title and fresh-intro routes; older town/battle/transition checks. Full campaign unvalidated. |
+| Scenario 1 — Translation Project v25.1 | Current intro, original-save load and fresh-opening routes. Broader gameplay unvalidated. |
+| Scenario 2 — Translation Project v24 | Current isolated producer checks for its BOOT family. Towns, battles, items/spells and snapshots were exercised on earlier builds; no complete campaign claim. |
+| Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. Current producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
+| Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight current routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
+| Scenario 3 — Translation Project v25.1 | Current title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
+| Premium Disc / unregistered revisions | No profile. Deferred until separately identified and tested. |
 
-| Game and registered edition | In v0.8.0? | Local Windows gameplay evidence |
-| --- | --- | --- |
-| Scenario 1 — USA MK-81383 V1.001, unpatched | Yes | Title, town, battle and transition routes tested on an earlier build; full campaign unvalidated. |
-| Scenario 1 — Translation Project v25.1 | Yes | Intro, original-save load and fresh opening tested on an earlier build. Comparison frames were reviewed; broader gameplay remains unvalidated. |
-| Scenario 2 — Translation Project v24 | Yes | Towns, battles, menus, selected item/spell paths and native-state continuations tested on earlier builds; other routes remain unvalidated. |
-| Scenario 2 — v25.1 translation migrated from the registered v24 image | Yes | Experimental, specific locally migrated image; intro, save-load and limited transition routes tested on an earlier build. Not a claim of support for every v25.1 disc variant or original-Saturn compatibility. |
-| Scenario 2 — supplied V1.003 image, header reports V24 | Yes | Exact translation version unverified. Local save-load, battle, volcano, audio and quick-state routes tested; full campaign remains unvalidated. |
-| Scenario 3 — Translation Project v25.1 | Yes | Fresh-game setup, ship dialogue, first-battle screen and priest interior reached on earlier builds; broader battles and campaign transfers remain unvalidated. |
-| Premium Disc / unregistered revisions | No profile | Deferred or unsupported until separately identified and tested. |
+The launcher separates original USA Scenario 1, translated Scenario 1, translated Scenario 2 and translated Scenario 3, each with independent game-data paths. Unknown revisions produce a local `unregistered-disc.json` report without replacing progress or builds. Native compilation requires reviewed executable mappings for the exact image. Static compilation, emission, executed routes and hardware fidelity are separate claims.
 
-Disc verification checks contents, so a matching filename or translation label alone does not establish compatibility. The latest runtime optimizations have been replay-tested on the supplied Scenario 2 V1.003 image; the other editions have not yet been revalidated with those changes. Static module compilation and actual gameplay coverage are tracked separately in [Status and validation](#status-and-validation).
+## Playing and updating
 
-### What the latest preview adds
+1. Extract the **whole archive** into a new application folder. Open **SFIII Native.exe** on Windows, **SFIII Native** on Linux, or **SFIII Native.app** on Apple Silicon macOS.
+2. Choose the scenario, your supported **CUE or CHD**, and a separate writable game-data folder. Keep a CUE's BIN tracks beside it.
+3. Click **Prepare game**, wait for automatic local preparation, then **Play**. Keep the application folder: it contains tools used by preparation and save import.
+4. For 16:9, leave **AI graphics Off**. Start with 5× and SSAA Off, then increase quality if performance permits.
 
-- **Optional local AI artwork:** generate eligible world textures and CHR/CHP character frames from your own discs. Menus and HUD retain original artwork. View the [same-frame screenshot comparisons](#screenshots).
-- **A standalone GPU builder:** generation runs on your own Vulkan GPU, with resumable work and automatic playable-pack assembly. First-run setup downloads verified tools; processing then runs locally without Codex, API keys or paid services. Generated artwork packs are not distributed. See [builder setup](docs/DESKTOP.md#optional-graphics-builder).
-- **Faster pack loading and bounded caches:** startup indexes reduce file scanning, replacement pixels load as needed, and the GPU uploads visible materials. The [measured local result](#status-and-validation) covers artwork initialization rather than total launch time.
-- **Launcher pack controls and simpler resolution choices:** attach optional packs or restore original artwork; the new Windows menu offers **1× / 2× / 5×** rendering. Earlier AA and ray-shadow menu experiments are not offered in this preview.
+When updating from a published download, select your existing scenario data folder and run **Prepare game** again using the new application. Ordinary saves remain in that separate folder. **Native quick states and replay checkpoints are build/disc-specific:** retain the previous application/prepared build for its states, and use an ordinary in-game save to move progress between releases. A locally checked checkpoint migration is not automatic release-wide state compatibility.
 
-Current priorities are broader gameplay/save-state validation, remaining background and texture defects, improved widescreen culling, and more disc editions. Background-plane artwork replacement and complete character/campaign artwork coverage remain unfinished. See [upcoming work](#upcoming-features).
+Controllers include SDL mappings for PlayStation, Xbox and generic devices, plus a binding/test utility for Saturn USB and other pads. The Saturn USB pad has physical local validation; that does not certify every controller model. **F5/F9** save/load native states, **F6** cycles game speed, **F8** captures an issue, **F10** toggles the toolbar, and **F11** toggles fullscreen. Escape opens the menu.
 
-### Disc and translation compatibility
+The save manager **imports and exports individual BIN/YSBAK saves** for compatible emulator/Saroo workflows. Internal memory and cartridge memory are separate persistent backup files. Exported ordinary saves can be used with compatible Saroo save editors; native quick states cannot be loaded on a Saturn. Back up progress before importing or switching editions. See [controls, saves and display](docs/USAGE.md).
 
-The target is **original USA Scenario 1 plus v25-family translations of
-Scenarios 1–3**. This is not a claim that every such image currently works.
-Native compilation requires a reviewed profile for the exact disc contents;
-renaming an image or recognizing its title screen cannot establish compatibility.
-Premium Disc is deferred. Unregistered patch versions need their executable
-mappings and native routes investigated before being listed as compatible.
+Platform details: [Windows setup](docs/DESKTOP.md), [Linux/Apple Silicon setup](docs/POSIX.md), [developer source builds](docs/BUILDING.md).
 
-The development launcher has separate entries for original USA Scenario 1,
-translated Scenario 1, translated Scenario 2 and translated Scenario 3, each with
-independent game-data paths. It selects among registered revisions within each entry.
-Scenario 1 translation
-v25.1 has an independent profile, with intro, original-save load and fresh opening
-routes checked; the original USA profile remains separate. Development profiles also
-include the experimental Scenario 2 v24-to-v25.1 translation migration and the
-supplied V1.003 image whose header reports V24. Its exact translation version is
-unverified. A historical replay for the older image did not reach battle on this
-revision; separate local battle and volcano routes have since been tested. These profiles are included in v0.8.0; each remains limited to its registered exact-content image.
+## Optional local AI artwork
 
-The development save manager also exports ordinary saves as individual raw BIN
-files for use with compatible emulator or Saroo save tools. Export does not
-modify the native backup-memory files. The optional artwork builder now decodes
-supported close-up battle-model textures; one Scenario 3 battle-model format
-remains unsupported, and full artwork coverage is not established.
+The separate Windows builder uses your own Vulkan GPU to generate **Animated / Illustrated / General** artwork from registered discs. Extraction, inference and packaging run locally, with resumable work, cached GPU results and indexed packs. First-run setup downloads verified upstream tools; subsequent processing needs no Codex session, API key or subscription. Full processing can take hours and tens of GB.
 
-Unknown revisions produce a local `unregistered-disc.json` identification report
-without replacing existing saves or builds. A different revision needs a separate
-game-data folder. Ordinary saves can be imported between compatible game versions;
-native snapshots and replay checkpoints remain tied to their original build/disc.
+World textures, CHR/CHP character frames and supported close-up battle-model textures are included where decoded and matched. Menus/HUD retain original artwork. Unsupported formats, background-plane replacements, seams and complete character/animation/campaign coverage remain unfinished. One Scenario 3 battle-model format remains unsupported. These are precomputed artwork replacements, not DLSS or per-frame AI inference.
 
-When updating, extract into a new application folder and choose your existing scenario data folder, then run **Prepare game** again. The bundled tools handle preparation automatically. Existing in-game saves remain in the separate data folder. Native quick states are build-specific: keep your previous application and prepared build if you need its old states; use an ordinary in-game save to transfer progress to the new build.
-
-## Features
-
-- Keyboard and SDL controllers, including PlayStation, Xbox, generic USB and configurable Saturn USB controllers.
-- 1×, 2× and 5× rendering of supported geometry through Vulkan or Direct3D 12 on the new Windows preview. Earlier packages also offer 4×; Metal is available in the macOS baseline preview.
-- Experimental 16:9 rendering with centered original framing and additional scenery. This release recommends original graphics only; AI artwork can misalign or pop in when widescreen is enabled. Game-side object culling is still incomplete in untested routes, so edge gaps and pop-in can remain.
-- Persistent internal and cartridge backup storage, with import of supported Scenario 1/2/3 raw BIN and version-1 JSON YSBAK saves.
-- Direct native save states (F5/F9), with separate legacy replay checkpoints. Snapshot validation covers limited Scenario 2 translated-v24 routes; broader snapshot compatibility remains unvalidated.
-- A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
-- Experimental Linux launcher with bundled offline preparation tools, controller setup and save imports. macOS is not included in this release.
-- Separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware.
-- Optional locally generated artwork: **Off / Animated / Illustrated / General** in the current preview, with eligible world textures and decoded CHR/CHP character frames. Exact source transparency is retained; unmatched artwork, menus and HUD stay original. Extraction counts do not establish complete character, object or campaign coverage.
+When generation finishes, use **Attach packs to game** in the builder or **Optional graphics...** in the Windows launcher and select that exact revision's playable pack report. Keep the output at its current path and restart the game. No full regeneration is required merely to update this renderer. Choose **AI graphics Off** or **Use original graphics** to return to original artwork. For widescreen, use original artwork. [Builder setup and limits](docs/DESKTOP.md#optional-graphics-builder).
 
 ## Screenshots
 
-Windows examples illustrate development progress; they do not establish Linux/macOS gameplay compatibility. Images are release documentation, not downloadable game-asset packs.
-
-**Optional AI artwork:** the same Scenario 2 translated-v24 gameplay frames rendered through the native GPU paths at 5×, with original artwork followed by the three local AI styles. Characters and world textures use the selected style; HUD and menus retain original artwork. These are native renderer compositions of actual captured gameplay states, with identical camera and framing, rather than image-generation mockups. Contact sheets scale the complete images for comparison.
+These older Windows captures illustrate actual native rendering and optional artwork. They do not establish new-platform gameplay compatibility or show every v0.9.0 feature. Images are release documentation, not downloadable asset packs.
 
 [![Airo village: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)
 
-Full-size Airo village: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-original.png) · [Animated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-video.png) · [Illustrated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-anime.png) · [General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-airo-general.png).
-
 [![Battle formation: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)
 
-Full-size battle: [Original](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-original.png) · [Animated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-video.png) · [Illustrated](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-anime.png) · [General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/scenario2-battle-general.png).
-
-The styles can smooth away texture detail or introduce seams. Background-plane replacements and full-campaign artwork validation remain unfinished. **Off** restores original artwork with your selected native rendering resolution.
-
-Earlier screenshots below use original artwork. Click an image to open its full resolution.
-
-| Scenario 1 USA title | Scenario 2 translated v24 title |
+| Scenario 1 USA title | Scenario 2 translated title |
 | --- | --- |
-| [![Scenario 1 USA title screen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | [![Scenario 2 Translation Project v24 title screen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
+| ![Scenario 1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | ![Scenario 2](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
 
-**Internal resolution comparison:** the same captured Scenario 2 video state rendered through the native GPU renderer at each enhanced scale. Supported geometry is rendered at higher resolution; the original textures and sprites retain their original detail. Open the originals to compare edges, since the previews below share the available page width.
+| 2× rendering | 5× rendering |
+| --- | --- |
+| ![2x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | ![5x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
 
-| 2× — 640 × 480 | 4× — 1280 × 960 | 5× — 1600 × 1200 |
-| --- | --- | --- |
-| [![Scenario 2 town at 2x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | [![The same Scenario 2 town frame at 4x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png) | [![The same Scenario 2 town frame at 5x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
-
-**Experimental widescreen at 5× (2135 × 1200):** the same scene with an expanded viewport using original game graphics. It is the supported widescreen mode for this release; some untested routes may still expose game-side culling gaps or pop-in.
-
-[![Scenario 2 town with experimental widescreen and 5x GPU rendering](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
-
-Selected PNG screenshots are hosted as release documentation, outside the source tree and application packages. Local disc data, video dumps, saves and diagnostic captures remain outside the repository.
-
-## What you supply
-
-- **Windows:** Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
-- **Linux:** Ubuntu 22.04 or newer x86-64 desktop; see [platform requirements](docs/POSIX.md). macOS is not included in this release.
-- Your own supported **BIN/CUE or standalone CHD** disc matching one of the [registered editions](#registered-game-editions). Disc contents are verified; a filename or patch label alone is insufficient. The Scenario 1 data-track SHA-256 is:
-
-  `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`
-
-The current runtime provides BIOS services at a high level and **does not load or require a Saturn BIOS file**. No BIOS, game assets, disc images, saves, extracted files or generated game code are distributed here. Do not upload those files, including in issues or pull requests. Other revisions, translation patch versions, parent/delta CHDs and ISO input are not accepted. CHDs are converted locally with bundled chdman; gameplay uses compiled native code.
-
-## Get started
-
-**Windows players:** download [**SFIII-Native-0.8.0-win64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Native-0.8.0-win64.zip), extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. For 16:9, leave **AI graphics** set to **Off**. See [desktop setup](docs/DESKTOP.md).
-
-**Optional artwork experiment:** download [**SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip**](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip) separately. Its first run downloads verified upstream tools and prepares its extractor automatically; afterward extraction and GPU upscaling run on your own PC without Codex, API keys or paid services. A full run can take hours and tens of GB across all scenarios/styles. Use **Attach packs to game** when finished, then select **AI graphics** in the game's menu. Keep AI graphics **Off** for widescreen. See [builder setup and limits](docs/DESKTOP.md#optional-graphics-builder).
-
-**Linux:** download the Linux x64 archive from [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0), extract the complete archive, and open **SFIII Native**. macOS is not included in this release; Intel Mac is not substituted. See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
-
-The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
-
-**Developers building from source:** clone this repository, install the [build prerequisites](docs/BUILDING.md), then run from PowerShell in its directory:
-
-```powershell
-.\tools\setup-dependencies.ps1
-.\tools\prepare-game.ps1 -Cue 'D:\Games\SFIII\Shining Force III (USA).cue' -Work 'D:\SFIII-local' -Python python
-```
-
-The work folder must be outside the source repository. Preparation inventories your disc, generates and compiles code locally, and writes a launcher into that work folder. It does not upload your disc or saves. Compilation can take substantial time and disk space.
-
-Source builds write **Launch Native SFIII.cmd** into the work folder. See [building](docs/BUILDING.md) for manual steps and [controls, saves and display settings](docs/USAGE.md) for use. Earlier v0.1.0-alpha downloads are source-only; use the current Windows ZIP for automatic preparation.
-
-## Bring your own saves
-
-The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. The launcher accepts supported raw `SFORCE31_XX.BIN`, `SFORCE32_XX.BIN` and `SFORCE33_XX.BIN` saves, plus version-1 JSON `.ysbak` exports containing those records. Use the matching registered scenario edition. Import-format support does not establish that campaign carryover or every save works in gameplay. Arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
-
-The current Windows file-picker title still says “Scenarios 1 and 2”; the importer also accepts supported Scenario 3 records.
-
-Close the game, click **Import saves** in the desktop application (or open **Import Saturn Saves.cmd** in your work folder), select your exported saves, and choose **internal memory** or **cartridge memory**. Then launch the game and use its own load menu. The importer validates the save layout and checksum, leaves your original export untouched, and backs up an existing destination before writing. The desktop package includes Python; source builds require Python 3.11+. See [save formats and storage details](docs/USAGE.md#game-saves).
+![Experimental original-graphics widescreen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
 
 ## Status and validation
 
-The v0.8.0 Windows candidate passed the six required runtime regression targets plus compiled-entry emission and three available Scenario 2 V1.003 transition routes (title boot, town/house, and a current player-save route). Their captured review frames matched their baselines. Older historical fixtures absent from the external work folder were recorded as **unavailable**, not passing. These checks do not cover every spell, character animation, transition or campaign.
+The Windows development candidate passed the six required runtime regressions and compiled-entry emission checks, plus **16 external gameplay routes** across the four locally installed editions. One Scenario 3 ship frame changed from corrected colour blending; it was reviewed while its video-memory/register dump remained identical. There are **213 GPU shader cases**, exercised locally on Vulkan and Direct3D 12, and scaler/UI/state checks. At 9× with SSAA and vertex precision, the recorded Scenario 2 route measured about **59.7–59.8 fields/sec** for Nearest, Bicubic and Lanczos, with zero measured audio shortages. This is one route on one PC, not a universal performance guarantee or proof that every sound path is exact.
 
-The local Python suite was exercised with the packaged Python runtime; its POSIX launcher test was unavailable because that runtime does not include Tk. Hosted source/synthetic checks and the Linux package candidate are run after publication. Hosted jobs use invented data and do not validate real-disc gameplay, physical controllers or audio devices. The standalone builder's first-run setup, CHD conversion and limited GPU samples were tested separately on Windows.
+Source tests, static module findings, native-state coverage and hardware-model fidelity remain separate. Unvisited indirect targets, scenes, spells and transitions remain unvalidated. Linux and Apple Silicon packages receive native compilation, invented-data CPU/storage/CHD/UI/state tests and shader tests when a usable runner GPU is available. Missing GPU/physical-device/game fixtures are reported as unavailable, not passing gameplay validation. No game data is uploaded to CI.
 
-With the local three-style artwork set, measured warm artwork-pack initialization dropped from **16.9 seconds to 1.16 seconds** after indexing/caching. This measures artwork initialization on one PC, not complete game launch time or a performance guarantee for other hardware.
-
-The Scenario 1 development audit compiles 252 configured/candidate modules, including 169 X1 scene modules. Its nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Three mapping/entry reviews, nine discovery findings and 935 unresolved indirect sites remain review items. X046 now has revision-specific loader evidence for compilation; its gameplay path remains untested. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
-
-The Scenario 2 development audit compiles 285 configured/candidate modules, including 195 X1 scene programs and 59 X3 effects. Historical local routes exercised 14 X1 scenes, including imported-save church/town and battle transitions, Healing Drop use through X3ITEM, the magic menu's no-target path, and an Egress return to the church; this historical coverage is separate from the current candidate's nine-route suite above. There are three mapping/entry reviews, 25 discovery findings and 1159 unresolved indirect sites; the larger indirect-site count includes newly compiled effect code. Repeated native snapshots before and during the item animation matched video, audio and backup contents. Repeated native snapshots during the Egress transition also matched video, audio and backup contents. Other effects, unvisited gameplay and other snapshot times remain unvalidated.
-
-The spell/special dispatch tables have also been reviewed: all 81 Scenario 1, 93 Scenario 2 and 111 Scenario 3 entries resolve to mapped modules or container sections. This is static dispatch coverage, not validation of every spell animation. Additional direct loader/call evidence maps X049 in all three scenarios and X025/X048 in Scenarios 2/3. Seven mapping/entry reviews remain across the revisions: X004 in each scenario, and X019/X3ELEM5 in Scenarios 1/2. X019 in Scenarios 1/2 is modeled as monster-table data; its executable classification remains under review. X3ELEM5 does not appear in the reviewed effect dispatch tables and is not assigned a speculative load address.
-
-The v0.3.0 candidate passed the six required runtime regression targets, the four Scenario 2 routes and 64 GPU shader cases, including 5×, plus native-state and toolbar checks. Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
-
-Scenario 3 v25.1 development compiles 273 configured/candidate modules, including 169 X1 scene programs and 69 separately loaded sections of EFFECT.BIN. Eight Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior, exercising five X1 scenes. One module mapping/entry, 17 discovery findings and 1299 indirect sites remain review items; individual container effects have not received gameplay validation. The runtime also reports unimplemented VDP2 scroll/extended-color paths in this route; rendering is not certified hardware-faithful. Downloaded completed saves are isolated test fixtures, never installed as player progress. Broader battles, ordinary in-game saving/loading, full campaign transfers and Linux/macOS Scenario 3 gameplay remain unvalidated.
+Remaining limits include earlier camera-angle/object-transform quantization, complex coefficient/window/background paths, incomplete game-side widescreen culling, optional AI widescreen alignment, high-resolution capture hiccups and full-campaign validation. Resolution stays selected; sustained rendering overload can exceed the available performance. [Development details](docs/DEVELOPMENT.md) and [previous release evidence](docs/release-v0.8.0.md).
 
 ## Upcoming features
 
-Planned directions, with no release dates or compatibility guarantees. Faithful gameplay, graphics, audio and reliable saves take priority over enhancements.
-
-- **Broader gameplay validation:** exercise more towns, battles, menus and transitions, fixing crashes and rendering/audio defects as coverage grows.
-- **More complete widescreen:** improve game-side object and terrain culling so additional scenery remains visible as the camera moves and rotates.
-- **More supported editions:** register additional disc revisions while keeping each installation’s progress separate.
-- **Scenario 2/3 coverage, Premium Disc and more translations:** expand gameplay validation and add revision-specific compilation profiles, identifying supported patch versions explicitly.
-- **Save portability and campaign transfers:** expand verified emulator/Saroo import and export formats, and validate backed-up progress transfers between compatible scenarios and editions.
-- **Broader optional artwork coverage:** improve unsupported formats, large images, background planes, texture seams and animation consistency, while retaining original artwork and expanding gameplay validation.
-- **Broader native save-state validation:** extend snapshot tests across battles, transitions and additional scenarios, beyond the limited Scenario 2/3 routes tested so far.
-
-These are roadmap items; the supported profiles and tested coverage are listed above.
+Priorities are faithful gameplay, graphics, audio and reliable saves: expand towns/battles/menu/spell/transition coverage; improve remaining camera/background/widescreen paths; validate more save transfers and snapshot positions; and register additional exact disc editions. Premium Disc remains deferred. Broader artwork extraction/matching and platform gameplay checks need separate validation. No completion dates or universal compatibility guarantees are implied.
 
 ## Support development
 
-If you'd like to support development and testing, you can [leave a tip via PayPal](https://paypal.me/mattkuhn14). Contributions are optional; the project remains free, and no game data is provided.
+If you'd like to support development and testing, you can [leave a tip via PayPal](https://paypal.me/mattkuhn14). Contributions are optional; the project remains free and supplies no game data.
 
 ## Credits and licensing
 
-Built on [saturn-recomp](https://github.com/callumjenkins/saturn-recomp), derived from [saturnkit](https://github.com/vs-sr-dev/saturnkit). SFIII module mappings were informed by [SF3Tools](https://github.com/Synival/sf3tools). Controller mappings use [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB). Rendering and input use [SDL3](https://github.com/libsdl-org/SDL).
+Built on [saturn-recomp](https://github.com/callumjenkins/saturn-recomp), derived from [saturnkit](https://github.com/vs-sr-dev/saturnkit). SFIII format/module research uses [SF3Tools](https://github.com/Synival/sf3tools). Controller mappings use [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB); rendering and input use [SDL3](https://github.com/libsdl-org/SDL).
 
-Project source is provided under the [MIT license](LICENSE); third-party code retains its own notices. See [THIRD_PARTY.md](THIRD_PARTY.md). Shining Force III and Sega Saturn belong to their respective rights holders. This is an unofficial project and includes no permission to redistribute game content.
+Project source is [MIT licensed](LICENSE); third-party code retains its notices. See [THIRD_PARTY.md](THIRD_PARTY.md). Shining Force III and Sega Saturn belong to their respective rights holders. This unofficial project grants no permission to redistribute game content.

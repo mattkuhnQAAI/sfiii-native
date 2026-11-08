@@ -1,4 +1,4 @@
-name: Linux package
+name: Linux and Apple Silicon packages
 on:
   workflow_dispatch:
   push:
@@ -44,6 +44,8 @@ jobs:
         include:
           - runner: ubuntu-22.04
             target: linux-x86_64
+          - runner: macos-15
+            target: darwin-aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 100
     env:
@@ -52,6 +54,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Verify native runner architecture
+        shell: bash
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          python3 - <<'PY'
+          import os,platform,sys
+          arch={'arm64':'aarch64'}.get(platform.machine(),platform.machine())
+          actual=('darwin' if sys.platform=='darwin' else 'linux')+'-'+arch
+          assert actual==os.environ['EXPECTED_TARGET'], (actual,os.environ['EXPECTED_TARGET'])
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
