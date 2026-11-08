@@ -1,8 +1,8 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..72b2ee6 100644
+index 1219a02..d9b71aa 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
-@@ -11,6 +11,7 @@
+@@ -11,11 +11,17 @@
  // Semantics are src/saturnrecomp/sh2emu.py's, instruction for instruction: the
  // self-test (runtime/src/app/selftest.cpp) holds the two together.
  #pragma once
@@ -10,7 +10,17 @@ index 1219a02..72b2ee6 100644
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
-@@ -60,6 +61,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
+ 
+ #define SH2_UNLIKELY(x) __builtin_expect(!!(x), 0)
++#if defined(__APPLE__)
++#define SH2_OPTIONAL_HOOK __attribute__((weak_import))
++#else
++#define SH2_OPTIONAL_HOOK __attribute__((weak))
++#endif
+ 
+ struct SH2Context {
+     uint32_t r[16];
+@@ -60,6 +66,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
  #define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
@@ -60,7 +70,7 @@ index 566fcfd..18c8628 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..e1894ff 100644
+index cb6af72..1314594 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,8 +3,12 @@
@@ -162,7 +172,7 @@ index cb6af72..e1894ff 100644
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
 -    if (SH2_UNLIKELY(is_base(addr)) && !inside_loaded_program(addr)) {
-+    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) __attribute__((weak));
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) SH2_OPTIONAL_HOOK;
 +    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,false);
 +    static const char* probe = std::getenv("SF3_CALL_ADDRESS");
 +    static const char* path = std::getenv("SF3_CALL_DUMP");
@@ -196,7 +206,7 @@ index cb6af72..e1894ff 100644
 +    // recognizes the exact native viewport bounds and restores guest RAM as
 +    // soon as the visibility call returns. Other editions retain their normal
 +    // visibility behavior until independently reviewed.
-+    extern bool vdp1_widescreen() __attribute__((weak));
++    extern bool vdp1_widescreen() SH2_OPTIONAL_HOOK;
 +    const uint32_t bounds = c.gbr;
 +    const bool candidate = vdp1_widescreen && vdp1_widescreen() && addr == 0x0600C91C &&
 +        c.pr == 0x0603D7EC && bounds && (int16_t)ld16(bounds+120) == -160 &&
@@ -220,7 +230,7 @@ index cb6af72..e1894ff 100644
  }
  
  void sh2_hook(SH2Context& c, uint32_t addr) {
-+    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) __attribute__((weak));
++    extern void sf3_vertex_precision_call(SH2Context&,uint32_t,bool) SH2_OPTIONAL_HOOK;
 +    if(sf3_vertex_precision_call)sf3_vertex_precision_call(c,addr,false);
      for (int i = 0; i < g_nhooks; ++i)
          if (g_hooks[i].addr == addr) {
@@ -2514,7 +2524,7 @@ index b9595ef..1c07383 100644
 +    if(!write_png_file(path,fr))sat_note("cannot write %s",path.c_str());
  }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..04bd941 100644
+index 8589d33..c3b549b 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -38,6 +38,7 @@
@@ -2589,7 +2599,7 @@ index 8589d33..04bd941 100644
  uint64_t vdp1_draws() { return g_draws; }
  
  void vdp1_init() {
-+    extern void sf3_vertex_precision_reset() __attribute__((weak));
++    extern void sf3_vertex_precision_reset() SH2_OPTIONAL_HOOK;
 +    if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
 +    ++g_presentation_epoch;
      g_reg[MODR] = 0x1000;                       // version 1
@@ -2645,7 +2655,7 @@ index 8589d33..04bd941 100644
 +    if(c.gouraud) for(int i=0;i<4;++i) {
 +        q.shade[i*3]=(c.g[i].r-16)*8.0f;q.shade[i*3+1]=(c.g[i].g-16)*8.0f;q.shade[i*3+2]=(c.g[i].b-16)*8.0f;
 +    }
-+    extern bool sf3_vertex_precision_quad(const uint8_t*,float*) __attribute__((weak));
++    extern bool sf3_vertex_precision_quad(const uint8_t*,float*) SH2_OPTIONAL_HOOK;
 +    if(q.gpu_eligible && g_precision_command && (c.ctrl&15)==2 && sf3_vertex_precision_quad)
 +        sf3_vertex_precision_quad(g_precision_command,q.xy);
 +    hd_fingerprint(scene.fingerprint,texture->fingerprint);
@@ -2849,7 +2859,7 @@ index 8589d33..04bd941 100644
 +    }
 +    if(s.loading) {
 +        ++g_presentation_epoch;g_hd_textures.clear();
-+        extern void sf3_vertex_precision_reset() __attribute__((weak));
++        extern void sf3_vertex_precision_reset() SH2_OPTIONAL_HOOK;
 +        if(sf3_vertex_precision_reset)sf3_vertex_precision_reset();
 +    }
 +    if(s.loading && g_render_scale>1) for(int p=0;p<2;++p)
