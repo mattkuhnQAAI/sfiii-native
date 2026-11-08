@@ -10,10 +10,16 @@ sf3::VertexCommandCache commands;
 sf3::PrecisionQuad pending{};uint32_t pending_address=0;
 uint64_t last_field=0;
 sf3::VertexPrecisionStats stats;
+struct ProducerCode {
+    std::array<uint8_t,280> formatter{};
+    std::array<uint8_t,768> projection{};
+    std::array<uint8_t,32> queue{};
+    const sf3::VertexProducerProfile* profile=nullptr;
+} verified;
 bool ram(uint32_t address,unsigned size) {
     return SH2_IS_WRAM_H(address) && (address&0xFFFFF)<=0x100000-size;
 }
-void reset(){commands.clear();pending_address=0;last_field=sat_vblanks();}
+void reset(){commands.clear();pending_address=0;last_field=sat_vblanks();verified.profile=nullptr;}
 const sf3::VertexProducerProfile* producer_profile() {
     // Only locally reviewed BOOT revisions are enabled. Other editions
     // require independent producer/caller review; matching addresses alone fail.
@@ -28,6 +34,17 @@ const sf3::VertexProducerProfile* producer_profile() {
     return profile;
 }
 bool verified_producer(const sf3::VertexProducerProfile& profile) {
+    if(!ram(profile.formatter,280) || !ram(profile.projection,profile.projection_size) ||
+       profile.projection_size>verified.projection.size() || !ram(profile.queue,32))return false;
+    const auto* formatter=g_wram_h+(profile.formatter&0xfffff);
+    const auto* projection=g_wram_h+(profile.projection&0xfffff);
+    const auto* queue=g_wram_h+(profile.queue&0xfffff);
+    // Keep checking every byte on every producer call. Once identified, an
+    // exact comparison avoids hashing the same resident instructions per quad.
+    if(verified.profile==&profile)
+        return !std::memcmp(formatter,verified.formatter.data(),280) &&
+               !std::memcmp(projection,verified.projection.data(),profile.projection_size) &&
+               !std::memcmp(queue,verified.queue.data(),32);
     uint64_t hash=14695981039346656037ull;
     for(uint32_t a=profile.formatter;a<profile.formatter+280;++a){hash^=ld8(a);hash*=1099511628211ull;}
     if(hash!=0x888056474C98BA8Dull)return false;
@@ -36,7 +53,11 @@ bool verified_producer(const sf3::VertexProducerProfile& profile) {
     if(hash!=profile.projection_hash)return false;
     hash=14695981039346656037ull;
     for(uint32_t a=profile.queue;a<profile.queue+32;++a){hash^=ld8(a);hash*=1099511628211ull;}
-    return hash==profile.queue_hash;
+    if(hash!=profile.queue_hash)return false;
+    std::copy_n(formatter,280,verified.formatter.begin());
+    std::copy_n(projection,profile.projection_size,verified.projection.begin());
+    std::copy_n(queue,32,verified.queue.begin());verified.profile=&profile;
+    return true;
 }
 }
 namespace sf3 {
@@ -45,8 +66,10 @@ VertexPrecisionStats vertex_precision_stats(){return stats;}
 }
 void sf3_vertex_precision_reset(){reset();}
 void sf3_vertex_precision_call(SH2Context& c,uint32_t address,bool returned) {
-    if(!enabled || !vdp1_gpu_active() || vdp1_render_scale()==1)return;
+    if(!enabled)return;
     const auto* profile=producer_profile();if(!profile)return;
+    if(address!=profile->queue && !sf3::vertex_formatter_entry(address,profile->formatter))return;
+    if(!vdp1_gpu_active() || vdp1_render_scale()==1)return;
     if(returned) {
         // The post-lighting entry returns to a queue label in its caller,
         // rather than dispatching another sh2_call. Its command is now complete.
@@ -56,7 +79,8 @@ void sf3_vertex_precision_call(SH2Context& c,uint32_t address,bool returned) {
     const uint64_t field=sat_vblanks();if(field<last_field)reset();last_field=field;
     if(sf3::vertex_formatter_entry(address,profile->formatter)) {
         pending_address=0;
-        if(c.pr!=profile->queue || !ram(c.gbr,920) || !ram(c.r[11],32) || !verified_producer(*profile))return;
+        if(c.pr!=profile->queue || !ram(c.gbr,920) || !ram(c.r[11],32))return;
+        if(!verified_producer(*profile)){commands.clear();return;}
         sf3::PrecisionQuad q{};
         for(int i=0;i<4;++i) {
             const uint32_t a=c.r[i+1];if(!ram(a,16)){++stats.rejected;return;}

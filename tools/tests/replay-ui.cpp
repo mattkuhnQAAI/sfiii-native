@@ -24,6 +24,21 @@ int main(int argc, char** argv) {
     video_state(state);
     Frame picture; picture.w=320; picture.h=240; picture.px.assign(320*240, 0x102030);
     present(picture);
+    {
+        const auto base=g_base;const bool paced=g_paced;
+        const auto draw=g_last_presented_draw,change=g_last_presented_change;
+        const auto omitted=g_omitted_field,count=g_catch_up_fields;
+        g_paced=true;
+        g_base=Clock::now()-std::chrono::nanoseconds(sat_now()/g_game_speed)-std::chrono::milliseconds(40);
+        if(host_wants_frame() || g_omitted_field!=sat_vblanks())return 121;
+        g_last_presented_draw^=1;
+        if(!host_wants_frame())return 122; // A new draw must be shown even when late.
+        g_last_presented_draw=draw;g_last_presented_change^=1;
+        if(!host_wants_frame())return 123; // A framebuffer change must also be shown.
+        g_last_presented_change=change;g_paced=false;
+        if(!host_wants_frame())return 124;
+        g_base=base;g_paced=paced;g_omitted_field=omitted;g_catch_up_fields=count;
+    }
     // Hidden toolbar has no reserved height and cannot activate invisible controls.
     toolbar_set(2);draw(false);
     if(replay_bar_height()!=0 || g_dst.h<=0 || g_dst.y<0)return 85;

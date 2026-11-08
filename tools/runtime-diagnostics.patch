@@ -226,10 +226,10 @@ index cb6af72..e1894ff 100644
          if (g_hooks[i].addr == addr) {
              if (g_hooks[i].fn) g_hooks[i].fn(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..7e4b0fe 100644
+index feded39..f02fec0 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,20 @@
+@@ -42,6 +42,22 @@
  #include <chrono>
  #include <cstring>
  #include <map>
@@ -238,6 +238,7 @@ index feded39..7e4b0fe 100644
 +#include "app-icon.h"
 +#include "audio-buffer.h"
 +#include "capture-writer.h"
++#include "presentation-pacing.h"
 +#include "replay-checkpoint.h"
 +#include "gpu-renderer.h"
 +#include "hd-assets.h"
@@ -246,11 +247,12 @@ index feded39..7e4b0fe 100644
 +#include "vertex-precision.h"
 +#include <fstream>
 +#include <stdexcept>
++#include <atomic>
 +#endif
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +64,49 @@ static SDL_Texture* g_tex;
+@@ -50,19 +66,67 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -270,18 +272,37 @@ index feded39..7e4b0fe 100644
 +static std::chrono::steady_clock::time_point g_perf_begin,g_perf_end;
 +static uint64_t g_perf_first=0,g_perf_last=0,g_perf_fields=0;
 +static int g_perf_empty_base=0;
++static uint64_t g_last_presented_draw=~uint64_t(0),g_last_presented_change=~uint64_t(0);
++static uint64_t g_omitted_field=~uint64_t(0),g_catch_up_fields=0;
 +static void upload_frame(const Frame& f);
 +#endif
  using Clock = PaceClock;
  static Clock::time_point g_base;                // host time of virtual time 0
  static bool g_paced;
+-
+-bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
 +static int g_game_speed = 1; // Host pacing only; never change machine clocks.
 +static void speed_set(int speed);
 +static void vsync_set(bool enabled);
 +static bool gpu_offscreen() {return std::getenv("SF3_GPU_OFFSCREEN")!=nullptr;}
- 
--bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
-+bool host_wants_frame() { return g_win && sat_vblanks() % (sat_resuming() ? 30 : g_game_speed) == 0; }
++
++bool host_wants_frame() {
++    if(!g_win || sat_vblanks() % (sat_resuming() ? 30 : g_game_speed))return false;
++#ifdef SF3_CONTROLLER_SUPPORT
++    static const char* catchup=std::getenv("SF3_AUDIO_CATCHUP");
++    static const char* capture=std::getenv("SF3_CAPTURE_AT");
++    const bool capture_due=capture && sat_vblanks()==std::strtoull(capture,nullptr,10);
++    if(!sat_resuming() && !gpu_offscreen() && !capture_due && (!catchup || std::strcmp(catchup,"0"))) {
++        const auto due=g_base+std::chrono::nanoseconds(sat_now()/g_game_speed);
++        const int64_t late=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-due).count();
++        const bool duplicate=video_draws()==g_last_presented_draw && video_frame_changes()==g_last_presented_change;
++        if(sf3::catch_up_repeated_field(g_paced,duplicate,late,video_frame_ns(),g_game_speed)) {
++            g_omitted_field=sat_vblanks();++g_catch_up_fields;return false;
++        }
++    }
++#endif
++    return true;
++}
  uint16_t host_pad(int slot) { return g_buttons[slot]; }
 -bool host_pad_connected(int slot) { return g_win && (slot == 0 || g_slots.taken(slot)); }
 +bool host_pad_connected(int slot) {
@@ -302,7 +323,7 @@ index feded39..7e4b0fe 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +135,30 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +155,30 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -333,7 +354,7 @@ index feded39..7e4b0fe 100644
      bind_keyboard();
  }
  
-@@ -112,7 +180,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +200,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -347,7 +368,7 @@ index feded39..7e4b0fe 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,16 +195,66 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,16 +215,66 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -415,7 +436,7 @@ index feded39..7e4b0fe 100644
      return true;
  }
  
-@@ -150,6 +274,11 @@ bool host_open() {
+@@ -150,6 +294,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -427,18 +448,29 @@ index feded39..7e4b0fe 100644
      return true;
  }
  
-@@ -163,6 +292,10 @@ struct HostCall {
+@@ -163,6 +312,21 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
 +static int g_audio_waits;
 +#ifdef SF3_CONTROLLER_SUPPORT
 +static sf3::AudioBuffer g_audio_buffer;
++static std::atomic<uint64_t> g_audio_requests{0},g_audio_short_requests{0},g_audio_requested_extra{0};
++static void SDLCALL audio_request_probe(void*,SDL_AudioStream*,int additional,int total) {
++    if(total<=0)return;
++    g_audio_requests.fetch_add(1,std::memory_order_relaxed);
++    // SDL's resampler may overestimate slightly. Count requests larger than
++    // one sample block separately, without generating or altering any audio.
++    if(additional>=256) {
++        g_audio_short_requests.fetch_add(1,std::memory_order_relaxed);
++        g_audio_requested_extra.fetch_add(unsigned(additional),std::memory_order_relaxed);
++    }
++}
 +#endif
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +307,115 @@ bool host_audio_open() {
+@@ -174,23 +338,122 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -450,6 +482,8 @@ index feded39..7e4b0fe 100644
 +        g_base=Clock::now()-std::chrono::nanoseconds(sat_now());
 +    }
 +    g_underruns = g_dropped = g_audio_waits = 0;
++    g_audio_requests=0;g_audio_short_requests=0;g_audio_requested_extra=0;
++    SDL_SetAudioStreamGetCallback(g_audio,audio_request_probe,nullptr);
 +    SDL_AudioSpec device_spec{};int device_frames=0;
 +    if(SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(g_audio),&device_spec,&device_frames) && device_spec.freq>0 && device_frames>0)
 +        g_audio_buffer.device_margin_ns=std::clamp<uint64_t>(uint64_t(device_frames)*2000000000ull/unsigned(device_spec.freq),20000000,100000000);
@@ -522,12 +556,17 @@ index feded39..7e4b0fe 100644
  void host_audio_report() {
 -    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
 +#ifdef SF3_CONTROLLER_SUPPORT
++    if(g_audio)SDL_PauseAudioStreamDevice(g_audio);
++    std::fprintf(stderr,"  audio device requests: %llu total, %llu short requests (%llu extra input bytes requested; resampler estimate)\n",
++                 (unsigned long long)g_audio_requests.load(),(unsigned long long)g_audio_short_requests.load(),
++                 (unsigned long long)g_audio_requested_extra.load());
 +    try {g_capture_writer.finish();}
 +    catch(const std::exception& error){sat_note("Capture export failed: %s",error.what());}
 +#endif
 +    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    const auto vertex_stats=sf3::vertex_precision_stats();
++    if(g_catch_up_fields)std::fprintf(stderr,"  presentation catch-up: %llu repeated VDP1 fields omitted; new world draws retained\n",(unsigned long long)g_catch_up_fields);
 +    if(vertex_stats.captured || vertex_stats.rejected)
 +        std::fprintf(stderr,"  vertex precision: %llu recorded quads, %llu GPU quads refined, %llu unsupported candidates retained\n",
 +                     (unsigned long long)vertex_stats.captured,(unsigned long long)vertex_stats.applied,(unsigned long long)vertex_stats.rejected);
@@ -558,7 +597,7 @@ index feded39..7e4b0fe 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +506,9 @@ static void read_pads() {
+@@ -281,6 +544,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -568,7 +607,7 @@ index feded39..7e4b0fe 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +520,7 @@ static void read_pads() {
+@@ -292,6 +558,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -576,7 +615,7 @@ index feded39..7e4b0fe 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +532,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +570,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -589,7 +628,7 @@ index feded39..7e4b0fe 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +562,7 @@ void host_rebind() {
+@@ -329,6 +600,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -597,7 +636,7 @@ index feded39..7e4b0fe 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +570,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +608,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -607,7 +646,7 @@ index feded39..7e4b0fe 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +675,7 @@ static uint16_t touch_read() {
+@@ -438,7 +713,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -616,7 +655,7 @@ index feded39..7e4b0fe 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +693,49 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +731,49 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -668,7 +707,7 @@ index feded39..7e4b0fe 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +744,37 @@ static int choice_at(MenuId id) {
+@@ -468,6 +782,37 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -706,7 +745,7 @@ index feded39..7e4b0fe 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -480,27 +787,91 @@ static void pad_size_set(int size) {
+@@ -480,27 +825,91 @@ static void pad_size_set(int size) {
  static const char* menu_label(MenuId id) {
      switch (id) {
      case M_RESUME: return "Resume";
@@ -808,7 +847,7 @@ index feded39..7e4b0fe 100644
      float k2 = std::min({dp, w / w2, h / h2}), k1 = std::min({dp, w / w1, h / h1});
      bool two = k2 >= k1;
      float u = two ? k2 : k1;
-@@ -511,15 +882,15 @@ static MenuLayout menu_layout() {
+@@ -511,15 +920,15 @@ static MenuLayout menu_layout() {
      l.title_y = l.panel.y + (pad + title / 2) * u;
      float top = l.panel.y + (pad + title) * u;
      for (int c = 0; c < 2; ++c) {
@@ -828,7 +867,7 @@ index feded39..7e4b0fe 100644
          }
      }
      return l;
-@@ -527,8 +898,9 @@ static MenuLayout menu_layout() {
+@@ -527,8 +936,9 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -840,7 +879,7 @@ index feded39..7e4b0fe 100644
  }
  
  static SDL_FRect segment(const MenuLayout& l, const MenuRow& r, int i) {
-@@ -563,12 +935,211 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +973,211 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -1053,7 +1092,7 @@ index feded39..7e4b0fe 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1151,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1189,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -1062,7 +1101,7 @@ index feded39..7e4b0fe 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -599,6 +1170,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+@@ -599,6 +1208,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
          g_menu_at = (int)i;
          SDL_FRect a = control_area(l, r);
          if (r.control == Control::Choice && inside(a, x, y)) {
@@ -1070,7 +1109,7 @@ index feded39..7e4b0fe 100644
              for (int k = 0; k < choice_count(r.id); ++k)
                  if (inside(segment(l, r, k), x, y)) choose(r.id, k);
          } else if (r.control == Control::Slider && inside(a, x, y)) {
-@@ -656,13 +1228,25 @@ static void on_event(const SDL_Event& e) {
+@@ -656,13 +1266,25 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1097,7 +1136,7 @@ index feded39..7e4b0fe 100644
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
          if (!g_menu_open) {
              if (back && !e.key.repeat) menu_open();
-@@ -686,10 +1270,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1308,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1121,7 +1160,7 @@ index feded39..7e4b0fe 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -824,15 +1419,20 @@ static void draw_menu() {
+@@ -824,15 +1457,20 @@ static void draw_menu() {
      ui_text(l.panel.x + 20 * u, l.title_y, 26 * u, "Paused", text, true, UiAlign::Left);
      ui_text(l.panel.x + l.panel.w - 20 * u, l.title_y, 13 * u, "Back to resume", muted, false, UiAlign::Right);
      for (int c = 0; c < 2; ++c)
@@ -1144,7 +1183,7 @@ index feded39..7e4b0fe 100644
          SDL_FRect a = control_area(l, r);
          switch (r.control) {
          case Control::Action:
-@@ -841,6 +1441,12 @@ static void draw_menu() {
+@@ -841,6 +1479,12 @@ static void draw_menu() {
          case Control::Choice: {
              ui_fill_rounded(a, a.h / 2, well);
              int at = choice_at(r.id);
@@ -1157,7 +1196,7 @@ index feded39..7e4b0fe 100644
              for (int k = 0; k < choice_count(r.id); ++k) {
                  SDL_FRect s = segment(l, r, k);
                  if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
-@@ -894,12 +1500,49 @@ static void draw_catching_up() {
+@@ -894,12 +1538,49 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1209,7 +1248,7 @@ index feded39..7e4b0fe 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1555,16 @@ static void draw() {
+@@ -912,15 +1593,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1229,7 +1268,7 @@ index feded39..7e4b0fe 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1575,95 @@ static void menu_loop() {
+@@ -931,38 +1613,98 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1313,6 +1352,9 @@ index feded39..7e4b0fe 100644
 +        if(sat_vblanks()<std::strtoull(first,nullptr,10)){events();return;}
 +    upload_frame(f);
 +#ifdef SF3_CONTROLLER_SUPPORT
++    g_last_presented_draw=video_draws();g_last_presented_change=video_frame_changes();
++#endif
++#ifdef SF3_CONTROLLER_SUPPORT
 +    if(const char* from=std::getenv("SF3_PERF_FROM"))if(!sat_resuming() && sat_vblanks()>=std::strtoull(from,nullptr,10)) {
 +        auto now=std::chrono::steady_clock::now();
 +        if(!g_perf_fields){g_perf_begin=now;g_perf_first=sat_vblanks();g_perf_empty_base=g_underruns;}
@@ -1346,14 +1388,18 @@ index feded39..7e4b0fe 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1674,16 @@ void host_present(const Frame& f) {
+@@ -973,12 +1715,20 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
 -    if (!g_win || !g_paced) return;
 +    // Fields without a displayed picture still poll input and service the menu.
 +    // Only host composition is skipped; VDP1 execution, interrupts and sound run.
-+    if (g_win && !sat_resuming() && sat_vblanks()%g_game_speed)
++    if (g_win && !sat_resuming() && (sat_vblanks()%g_game_speed
++#ifdef SF3_CONTROLLER_SUPPORT
++        || g_omitted_field==sat_vblanks()
++#endif
++        ))
 +        tasks_on_thread_stack([](void*) {events();if(g_menu_open)menu_loop();},nullptr);
 +    if (!g_win || !g_paced || gpu_offscreen()) return;
      if (sat_resuming()) {

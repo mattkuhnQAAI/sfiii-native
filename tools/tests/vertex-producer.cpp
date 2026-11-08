@@ -41,7 +41,7 @@ int main(int argc,char** argv) {
         std::ifstream cases(argv[2]);std::ofstream output(argv[3]);
         require(cases.good() && output.good(),"cannot open external cases/output");
         output<<std::setprecision(12);
-        char kind;unsigned id;
+        char kind;unsigned id;bool checked_cached_guard=false;
         while(cases>>kind>>id) {
             if(kind=='P') {
                 sf3::ProjectedPoint point;uint32_t x,y,z;int projection,near,ox,oy;
@@ -84,6 +84,24 @@ int main(int argc,char** argv) {
                 sf3::vertex_precision_configure(true);submit(entry==20);std::copy(native,native+8,precise);
                 require(sf3_vertex_precision_quad(cmd,precise)==applied,"adjacent writable viewport data disabled verified code");
                 std::copy(viewport,viewport+8,g_wram_h+(profile->projection&0xfffff)-8);
+                if(applied && !checked_cached_guard) {
+                    // Mutate live code after a successful verification, without
+                    // resetting the cache. Every exact-compare span and its
+                    // final byte must invalidate stale same-field geometry.
+                    sf3::vertex_precision_configure(true);submit(entry==20);
+                    for(auto [base,length]:{std::pair{profile->formatter,280u},
+                                           std::pair{profile->projection,profile->projection_size},
+                                           std::pair{profile->queue,32u}}) {
+                        for(unsigned offset:{0u,length/2,length-1}) {
+                            const uint32_t address=(base+offset)&0xfffff;
+                            g_wram_h[address]^=1;submit(entry==20);std::copy(native,native+8,precise);
+                            require(!sf3_vertex_precision_quad(cmd,precise),"cached guard accepted changed code or stale geometry");
+                            g_wram_h[address]^=1;submit(entry==20);
+                            require(sf3_vertex_precision_quad(cmd,precise),"restored verified code did not recover");
+                        }
+                    }
+                    checked_cached_guard=true;
+                }
                 // Native resolution, unavailable GPU, reset, wrong caller and
                 // changed code must all leave the same command untouched.
                 scale=1;require(!sf3_vertex_precision_quad(cmd,precise),"1x must retain native vertices");scale=5;

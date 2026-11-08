@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           cmake -S tools/tests -B "$RUNNER_TEMP/sfiii-checks" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime"
-          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed vertex_precision vertex_producer png_regression capture_writer hd_assets hd_pack_index
+          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer presentation_pacing game_speed vertex_precision vertex_producer png_regression capture_writer hd_assets hd_pack_index
       - name: Run required runtime regressions
         shell: bash
         run: |
@@ -54,4 +54,5 @@ jobs:
           "$RUNNER_TEMP/sfiii-checks/png_regression" "$RUNNER_TEMP/sfiii-png"
           python -B tools/tests/check_png.py "$RUNNER_TEMP/sfiii-png"
           "$RUNNER_TEMP/sfiii-checks/capture_writer" "$RUNNER_TEMP/sfiii-captures"
+          "$RUNNER_TEMP/sfiii-checks/presentation_pacing"
       # Real disc inventories, generated game code and gameplay fixtures stay local.
