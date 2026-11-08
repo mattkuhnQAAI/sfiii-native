@@ -6,6 +6,8 @@ Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D 
 
 ## Display
 
+Local audio updates avoid restarting playback on brief device read-ahead. Issue-capture PNG export runs in the background so saving a high-resolution image has less impact on music; wait briefly before requesting another capture. Closing normally finishes pending exports. These changes retain your selected resolution, SSAA and VSync settings.
+
 The local build adds saved **Vertex precision** and **Sharper backgrounds** On/Off menu choices. Both default to On and work above 1x with GPU rendering. Vertex precision reduces whole-pixel projection snapping in reviewed Scenario 1–3 model paths. Sharper backgrounds samples supported opaque rotating floors/backgrounds at the internal resolution. Unknown revisions, ambiguous geometry and unsupported effects retain native paths. Neither option changes gameplay timing, collisions, original textures or save formats. Camera/object-transform quantization and texture shimmer can remain.
 
 The local display-development build also offers **9x** and **Menu > Supersampling > Off / 4x**. In a 240-line scene, 9x renders 2160 lines: 2880x2160 in 4:3 or 3843x2160 before widescreen aspect correction. Four-sample SSAA renders at twice each axis and averages back to the chosen internal size on the GPU. Start at 5x with SSAA off, then compare it on; 9x plus SSAA is substantially more demanding. The original 1x setting retains exact native samples. The menu reports when GPU limits prevent SSAA. **Display filter** controls final window resizing independently. These local additions are not part of the published v0.8.0 download.

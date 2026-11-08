@@ -226,10 +226,10 @@ index cb6af72..e1894ff 100644
          if (g_hooks[i].addr == addr) {
              if (g_hooks[i].fn) g_hooks[i].fn(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..de5b37f 100644
+index feded39..7e4b0fe 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,19 @@
+@@ -42,6 +42,20 @@
  #include <chrono>
  #include <cstring>
  #include <map>
@@ -237,6 +237,7 @@ index feded39..de5b37f 100644
 +#include "controllers.h"
 +#include "app-icon.h"
 +#include "audio-buffer.h"
++#include "capture-writer.h"
 +#include "replay-checkpoint.h"
 +#include "gpu-renderer.h"
 +#include "hd-assets.h"
@@ -249,12 +250,13 @@ index feded39..de5b37f 100644
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +63,48 @@ static SDL_Texture* g_tex;
+@@ -50,19 +64,49 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
 +#ifdef SF3_CONTROLLER_SUPPORT
 +static sf3::GpuRenderer g_gpu;
++static sf3::CaptureWriter g_capture_writer;
 +static sf3::HdAssets g_ai_assets[3];
 +static sf3::HdGpu g_ai_gpu[3];
 +static bool g_ai_ready[3]={false,false,false};
@@ -300,7 +302,7 @@ index feded39..de5b37f 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +133,30 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +135,30 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -331,7 +333,7 @@ index feded39..de5b37f 100644
      bind_keyboard();
  }
  
-@@ -112,7 +178,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +180,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -345,7 +347,7 @@ index feded39..de5b37f 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,16 +193,66 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,16 +195,66 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -413,7 +415,7 @@ index feded39..de5b37f 100644
      return true;
  }
  
-@@ -150,6 +272,11 @@ bool host_open() {
+@@ -150,6 +274,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -425,7 +427,7 @@ index feded39..de5b37f 100644
      return true;
  }
  
-@@ -163,6 +290,10 @@ struct HostCall {
+@@ -163,6 +292,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -436,7 +438,7 @@ index feded39..de5b37f 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +305,107 @@ bool host_audio_open() {
+@@ -174,23 +307,115 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -448,7 +450,10 @@ index feded39..de5b37f 100644
 +        g_base=Clock::now()-std::chrono::nanoseconds(sat_now());
 +    }
 +    g_underruns = g_dropped = g_audio_waits = 0;
-+    sat_note("audio: prebuffer %d frames (100 ms), no silence injection", sf3::AudioBuffer::lead);
++    SDL_AudioSpec device_spec{};int device_frames=0;
++    if(SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(g_audio),&device_spec,&device_frames) && device_spec.freq>0 && device_frames>0)
++        g_audio_buffer.device_margin_ns=std::clamp<uint64_t>(uint64_t(device_frames)*2000000000ull/unsigned(device_spec.freq),20000000,100000000);
++    sat_note("audio: prebuffer %d frames (100 ms), %.1f ms device refill grace, no silence injection", sf3::AudioBuffer::lead,g_audio_buffer.device_margin_ns/1000000.0);
 +#else
      audio_silence(kLead);
 +#endif
@@ -487,7 +492,7 @@ index feded39..de5b37f 100644
 +            queued = queued_frames();
 +        }
 +    }
-+    if (g_audio_buffer.drained(queued)) {
++    if (g_audio_buffer.drained(queued,SDL_GetTicksNS())) {
 +        ++g_underruns;
 +        SDL_PauseAudioStreamDevice(g_audio);
 +        if (g_underruns <= 8) sat_note("audio: rebuffer %d at VBlank %llu", g_underruns, (unsigned long long)sat_vblanks());
@@ -509,12 +514,17 @@ index feded39..de5b37f 100644
 +        return;
 +    }
 +#ifdef SF3_CONTROLLER_SUPPORT
++    g_audio_buffer.submitted(queued,frames,SDL_GetTicksNS());
 +    if (g_audio_buffer.ready(queued + frames)) SDL_ResumeAudioStreamDevice(g_audio);
 +#endif
  }
  
  void host_audio_report() {
 -    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
++#ifdef SF3_CONTROLLER_SUPPORT
++    try {g_capture_writer.finish();}
++    catch(const std::exception& error){sat_note("Capture export failed: %s",error.what());}
++#endif
 +    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    const auto vertex_stats=sf3::vertex_precision_stats();
@@ -548,7 +558,7 @@ index feded39..de5b37f 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +496,9 @@ static void read_pads() {
+@@ -281,6 +506,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -558,7 +568,7 @@ index feded39..de5b37f 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +510,7 @@ static void read_pads() {
+@@ -292,6 +520,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -566,7 +576,7 @@ index feded39..de5b37f 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +522,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +532,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -579,7 +589,7 @@ index feded39..de5b37f 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +552,7 @@ void host_rebind() {
+@@ -329,6 +562,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -587,7 +597,7 @@ index feded39..de5b37f 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +560,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +570,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -597,7 +607,7 @@ index feded39..de5b37f 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +665,7 @@ static uint16_t touch_read() {
+@@ -438,7 +675,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -606,7 +616,7 @@ index feded39..de5b37f 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +683,49 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +693,49 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -658,7 +668,7 @@ index feded39..de5b37f 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +734,37 @@ static int choice_at(MenuId id) {
+@@ -468,6 +744,37 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -696,7 +706,7 @@ index feded39..de5b37f 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -480,27 +777,91 @@ static void pad_size_set(int size) {
+@@ -480,27 +787,91 @@ static void pad_size_set(int size) {
  static const char* menu_label(MenuId id) {
      switch (id) {
      case M_RESUME: return "Resume";
@@ -798,7 +808,7 @@ index feded39..de5b37f 100644
      float k2 = std::min({dp, w / w2, h / h2}), k1 = std::min({dp, w / w1, h / h1});
      bool two = k2 >= k1;
      float u = two ? k2 : k1;
-@@ -511,15 +872,15 @@ static MenuLayout menu_layout() {
+@@ -511,15 +882,15 @@ static MenuLayout menu_layout() {
      l.title_y = l.panel.y + (pad + title / 2) * u;
      float top = l.panel.y + (pad + title) * u;
      for (int c = 0; c < 2; ++c) {
@@ -818,7 +828,7 @@ index feded39..de5b37f 100644
          }
      }
      return l;
-@@ -527,8 +888,9 @@ static MenuLayout menu_layout() {
+@@ -527,8 +898,9 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -830,7 +840,7 @@ index feded39..de5b37f 100644
  }
  
  static SDL_FRect segment(const MenuLayout& l, const MenuRow& r, int i) {
-@@ -563,12 +925,207 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +935,211 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -898,18 +908,20 @@ index feded39..de5b37f 100644
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    try {
 +        namespace fs = std::filesystem;
++        if(g_capture_writer.busy())throw std::runtime_error("Previous capture is still being saved; try again shortly");
++        sf3::CaptureWriter::Images images;
 +        auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 +        fs::path path = fs::path(g_cfg.out) / "captures" / (std::to_string(stamp) + "-" + std::to_string(sat_vblanks()));
 +        fs::create_directories(path);
-+        video_capture_debug(path.string());
-+        if (g_last) write_png((path / "game.png").string(), *g_last);
-+        if(g_last && gpu_picture_active()) {
++        video_capture_debug(path.string(),false);
++        if(g_last) {
++            Frame native;native.w=g_last->w;native.h=g_last->h;native.px=g_last->px;
 +            Frame enhanced;
-+            upload_frame(*g_last);
-+            if(g_gpu.capture(enhanced)) {
-+                write_png((path/"game-native.png").string(),*g_last);
-+                write_png((path/"game.png").string(),enhanced);
-+            }
++            if(gpu_picture_active())upload_frame(*g_last);
++            if(gpu_picture_active() && g_gpu.capture(enhanced)) {
++                images.emplace_back((path/"game-native.png").string(),std::move(native));
++                images.emplace_back((path/"game.png").string(),std::move(enhanced));
++            } else images.emplace_back((path/"game.png").string(),std::move(native));
 +        }
 +        machine_capture_debug(path.string());
 +        // Read a freshly rendered backbuffer before presenting; GPU backbuffers may
@@ -923,7 +935,7 @@ index feded39..de5b37f 100644
 +        Frame window; window.w=rgb->w; window.h=rgb->h; window.px.resize(rgb->w*rgb->h);
 +        for (int y=0; y<rgb->h; ++y) std::memcpy(window.px.data()+y*rgb->w, (uint8_t*)rgb->pixels+y*rgb->pitch, rgb->w*4);
 +        SDL_DestroySurface(rgb);
-+        write_png((path / "window.png").string(), window);
++        images.emplace_back((path / "window.png").string(),std::move(window));
 +        for (const char* file : {"session.json", "replay-seed/context.json", "replay-seed/build-id.txt", "replay-seed/disc-id.txt"})
 +            if (fs::exists(fs::path(g_cfg.out) / file)) fs::copy_file(fs::path(g_cfg.out) / file, path / fs::path(file).filename());
 +        if (!g_cfg.record_input.empty() && fs::exists(g_cfg.record_input)) fs::copy_file(g_cfg.record_input, path / "input.txt");
@@ -938,10 +950,12 @@ index feded39..de5b37f 100644
 +        std::ofstream info(path / "capture.json");
 +        info << "{\"kind\":\"issue-capture\",\"vblank\":" << sat_vblanks() << ",\"virtual_ns\":" << sat_now() << ",\"video_framebuffer\":\"shown\"}\n";
 +        info.close();
++        if(!g_capture_writer.submit(std::move(images),[path] {std::ofstream ready(path/"images-ready.txt");ready<<"complete\n";}))
++            throw std::runtime_error("Capture exporter is busy");
 +        const char* work = std::getenv("SF3_CONTROLLER_DIR");
 +        if (work) { std::ofstream pointer(fs::path(work) / "last-capture.txt"); pointer << fs::absolute(path).string(); }
 +        sat_note("issue capture: %s", path.string().c_str());
-+        SDL_SetWindowTitle(g_win, "SFIII native - Issue captured (images and diagnostics saved)");
++        SDL_SetWindowTitle(g_win, "SFIII native - Issue captured");
 +    } catch (const std::exception& error) {
 +        sat_note("issue capture: %s", error.what());
 +        SDL_SetWindowTitle(g_win, (std::string("Capture failed: ") + error.what()).c_str());
@@ -1039,7 +1053,7 @@ index feded39..de5b37f 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1137,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1151,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -1048,7 +1062,7 @@ index feded39..de5b37f 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -599,6 +1156,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+@@ -599,6 +1170,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
          g_menu_at = (int)i;
          SDL_FRect a = control_area(l, r);
          if (r.control == Control::Choice && inside(a, x, y)) {
@@ -1056,7 +1070,7 @@ index feded39..de5b37f 100644
              for (int k = 0; k < choice_count(r.id); ++k)
                  if (inside(segment(l, r, k), x, y)) choose(r.id, k);
          } else if (r.control == Control::Slider && inside(a, x, y)) {
-@@ -656,13 +1214,25 @@ static void on_event(const SDL_Event& e) {
+@@ -656,13 +1228,25 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1083,7 +1097,7 @@ index feded39..de5b37f 100644
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
          if (!g_menu_open) {
              if (back && !e.key.repeat) menu_open();
-@@ -686,10 +1256,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1270,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1107,7 +1121,7 @@ index feded39..de5b37f 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -824,15 +1405,20 @@ static void draw_menu() {
+@@ -824,15 +1419,20 @@ static void draw_menu() {
      ui_text(l.panel.x + 20 * u, l.title_y, 26 * u, "Paused", text, true, UiAlign::Left);
      ui_text(l.panel.x + l.panel.w - 20 * u, l.title_y, 13 * u, "Back to resume", muted, false, UiAlign::Right);
      for (int c = 0; c < 2; ++c)
@@ -1130,7 +1144,7 @@ index feded39..de5b37f 100644
          SDL_FRect a = control_area(l, r);
          switch (r.control) {
          case Control::Action:
-@@ -841,6 +1427,12 @@ static void draw_menu() {
+@@ -841,6 +1441,12 @@ static void draw_menu() {
          case Control::Choice: {
              ui_fill_rounded(a, a.h / 2, well);
              int at = choice_at(r.id);
@@ -1143,7 +1157,7 @@ index feded39..de5b37f 100644
              for (int k = 0; k < choice_count(r.id); ++k) {
                  SDL_FRect s = segment(l, r, k);
                  if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
-@@ -894,12 +1486,49 @@ static void draw_catching_up() {
+@@ -894,12 +1500,49 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1195,7 +1209,7 @@ index feded39..de5b37f 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1541,16 @@ static void draw() {
+@@ -912,15 +1555,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1215,7 +1229,7 @@ index feded39..de5b37f 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1561,95 @@ static void menu_loop() {
+@@ -931,38 +1575,95 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1332,7 +1346,7 @@ index feded39..de5b37f 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1660,16 @@ void host_present(const Frame& f) {
+@@ -973,12 +1674,16 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -2361,6 +2375,92 @@ index 91d606c..387ded9 100644
          if (loading) s.resize(n);
          if (n) raw(s.data(), n);
      }
+diff --git a/runtime/src/video/png.cpp b/runtime/src/video/png.cpp
+index b9595ef..1c07383 100644
+--- a/runtime/src/video/png.cpp
++++ b/runtime/src/video/png.cpp
+@@ -3,18 +3,25 @@
+ #include "saturn.h"
+ #include "video.h"
+ #include <algorithm>
++#include <array>
+ #include <cstdio>
+ #include <vector>
+ 
+ static uint32_t crc32(const uint8_t* p, size_t n, uint32_t c = 0xFFFFFFFFu) {
+-    for (size_t i = 0; i < n; ++i) {
+-        c ^= p[i];
+-        for (int k = 0; k < 8; ++k) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+-    }
++    static constexpr auto table=[] {
++        std::array<uint32_t,256> values{};
++        for(unsigned i=0;i<values.size();++i) {
++            uint32_t value=i;
++            for(int bit=0;bit<8;++bit)value=(value>>1)^(0xEDB88320u&(0u-(value&1)));
++            values[i]=value;
++        }
++        return values;
++    }();
++    for (size_t i = 0; i < n; ++i)c=(c>>8)^table[(c^p[i])&255];
+     return c;
+ }
+ 
+-void write_png(const std::string& path, const Frame& fr) {
++bool write_png_file(const std::string& path, const Frame& fr) {
+     std::vector<uint8_t> raw;
+     raw.reserve((size_t)(fr.w * 3 + 1) * fr.h);
+     for (int y = 0; y < fr.h; ++y) {
+@@ -27,8 +34,15 @@ void write_png(const std::string& path, const Frame& fr) {
+         }
+     }
+     std::vector<uint8_t> z = {0x78, 0x01};
++    z.reserve(raw.size()+((raw.size()+65534)/65535)*5+6);
+     uint32_t a = 1, b = 0;
+-    for (uint8_t c : raw) { a = (a + c) % 65521; b = (b + a) % 65521; }
++    // At most 5552 bytes keep the unreduced sums inside uint32_t even when
++    // the preceding block ended with the largest possible reduced sums.
++    for(size_t begin=0;begin<raw.size();begin+=5552) {
++        const size_t end=std::min(raw.size(),begin+5552);
++        for(size_t i=begin;i<end;++i){a+=raw[i];b+=a;}
++        a%=65521;b%=65521;
++    }
+     for (size_t off = 0; off < raw.size();) {
+         size_t n = std::min<size_t>(65535, raw.size() - off);
+         z.push_back(off + n == raw.size() ? 1 : 0);
+@@ -40,17 +54,16 @@ void write_png(const std::string& path, const Frame& fr) {
+     uint32_t ad = b << 16 | a;
+     for (int i = 3; i >= 0; --i) z.push_back((uint8_t)(ad >> (8 * i)));
+     FILE* f = std::fopen(path.c_str(), "wb");
+-    if (!f) { sat_note("cannot write %s", path.c_str()); return; }
++    if (!f) return false;
+     auto be = [&](uint32_t v) {
+         uint8_t t[4] = {(uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v};
+         std::fwrite(t, 1, 4, f);
+     };
+     auto chunk = [&](const char* type, const std::vector<uint8_t>& d) {
+         be((uint32_t)d.size());
+-        std::vector<uint8_t> td(type, type + 4);
+-        td.insert(td.end(), d.begin(), d.end());
+-        std::fwrite(td.data(), 1, td.size(), f);
+-        be(crc32(td.data(), td.size()) ^ 0xFFFFFFFFu);
++        std::fwrite(type,1,4,f);
++        if(!d.empty())std::fwrite(d.data(),1,d.size(),f);
++        be(crc32(d.data(),d.size(),crc32(reinterpret_cast<const uint8_t*>(type),4)) ^ 0xFFFFFFFFu);
+     };
+     std::fwrite("\x89PNG\r\n\x1a\n", 1, 8, f);
+     std::vector<uint8_t> ihdr = {(uint8_t)(fr.w >> 24), (uint8_t)(fr.w >> 16), (uint8_t)(fr.w >> 8), (uint8_t)fr.w,
+@@ -59,5 +72,10 @@ void write_png(const std::string& path, const Frame& fr) {
+     chunk("IHDR", ihdr);
+     chunk("IDAT", z);
+     chunk("IEND", {});
+-    std::fclose(f);
++    const bool written=std::ferror(f)==0;
++    return std::fclose(f)==0 && written;
++}
++
++void write_png(const std::string& path,const Frame& fr) {
++    if(!write_png_file(path,fr))sat_note("cannot write %s",path.c_str());
+ }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
 index 8589d33..04bd941 100644
 --- a/runtime/src/video/vdp1.cpp
@@ -3436,7 +3536,7 @@ index 4c8bcb1..028d8b1 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..c9182c1 100644
+index 88d1642..617ad4d 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -3477,9 +3577,9 @@ index 88d1642..c9182c1 100644
 +    return std::fclose(f) == 0 && ok;
 +}
 +
-+void video_capture_debug(const std::string& directory) {
++void video_capture_debug(const std::string& directory,bool image) {
 +    if (!dump("", sat_vblanks(), &directory, true)) throw std::runtime_error("Cannot write captured video memory");
-+    if (g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
++    if (image && g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
 +        write_png(directory + "/game.png", g_frame);
 +}
 +
@@ -3502,7 +3602,7 @@ index 88d1642..c9182c1 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..120b0a1 100644
+index ebaa466..daed7cf 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3513,7 +3613,7 @@ index ebaa466..120b0a1 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,53 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,23 +18,54 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -3563,8 +3663,9 @@ index ebaa466..120b0a1 100644
  int vdp2_lines();                                    // 224, 240 or 256 (TVMD VRESO)
  
  void write_png(const std::string& path, const Frame& f);   // png.cpp
++bool write_png_file(const std::string& path,const Frame& f); // pixel/file IO only; worker-safe error return
 +void video_capture_crash();                         // raw video memory and last composed frame
-+void video_capture_debug(const std::string& directory); // shown framebuffer and unobscured game image
++void video_capture_debug(const std::string& directory,bool image=true); // shown framebuffer; image may be exported asynchronously
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();

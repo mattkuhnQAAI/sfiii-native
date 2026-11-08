@@ -88,6 +88,15 @@ int main(int argc, char** argv) {
     };
     auto initial_pixels=picture.px;
     if(g_game_speed!=1 || !host_audio_open())return 46;
+    {
+        std::vector<int16_t> pcm(sf3::AudioBuffer::lead*2,123);
+        host_audio_push(pcm.data(),sf3::AudioBuffer::lead);
+        SDL_PauseAudioStreamDevice(g_audio);SDL_ClearAudioStream(g_audio);
+        const int underruns=g_underruns;
+        host_audio_push(pcm.data(),128);
+        if(!g_audio_buffer.playing || g_underruns!=underruns)return 112;
+        SDL_ClearAudioStream(g_audio);g_audio_buffer.reset(1);
+    }
     for(int cycle=0;cycle<6;++cycle) {
         click(4+kRenderScaleCount);int expected=cycle%3+2;if(expected==4)expected=1;
         if(g_game_speed!=expected || SDL_GetAudioStreamFrequencyRatio(g_audio)!=expected ||
@@ -146,7 +155,9 @@ int main(int argc, char** argv) {
     if (second == checkpoint) return 5;
     event.key.scancode=SDL_SCANCODE_F8;
     on_event(event);
+    g_capture_writer.finish();
     click(2);
+    g_capture_writer.finish();
     auto work = fs::path(std::getenv("SF3_CONTROLLER_DIR"));
     std::ifstream pointer(work / "last-capture.txt");
     std::string capture_path((std::istreambuf_iterator<char>(pointer)), {});

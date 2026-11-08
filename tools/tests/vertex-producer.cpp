@@ -2,6 +2,7 @@
 // Game instruction bytes and case data are never part of this source package.
 #include "vertex-precision.h"
 #include "saturn.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
