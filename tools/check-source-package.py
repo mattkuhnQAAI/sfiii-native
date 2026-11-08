@@ -37,7 +37,7 @@ def main():
             failures.append([name,'unreviewed generation profile'])
         if path.parts[0] == 'desktop' and name not in {'desktop/dependencies.json','desktop/posix-dependencies.json'} and path.suffix not in {'.py','.cs'}:
             failures.append([name,'not desktop application source'])
-        if path.parts[0] == 'docs' and name not in {'docs/BUILDING.md','docs/USAGE.md','docs/DEVELOPMENT.md','docs/DESKTOP.md','docs/POSIX.md','docs/release-v0.8.0.md'}:
+        if path.parts[0] == 'docs' and name not in {'docs/BUILDING.md','docs/USAGE.md','docs/DEVELOPMENT.md','docs/DESKTOP.md','docs/POSIX.md','docs/release-v0.8.0.md','docs/release-v0.9.0.md'}:
             failures.append([name,'local history or unreviewed documentation'])
         if path.suffix.lower() in FORBIDDEN or any(x in {'.local','research','sessions','captures','generated','build','data','extract'} for x in path.parts):
             failures.append([name, 'game/build/debug artifact path'])
