@@ -9,6 +9,7 @@ from importlib.util import spec_from_file_location, module_from_spec
 # Executing a sibling by file path does not always add its directory to the
 # module search path (notably with embedded Python distributions).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from module_entries import vertex_hooks_for_identity, missing_vertex_hooks
 spec = spec_from_file_location('audit_modules',Path(__file__).with_name('audit-modules.py'))
 audit = module_from_spec(spec)
 spec.loader.exec_module(audit)
@@ -37,6 +38,15 @@ for row in report['modules']:
     absent = sorted(expected-{e.upper() for e in actual})
     entries += len(expected)
     if absent:missing.append(dict(module=name,entries=absent))
+    if name == 'BOOT' and table.exists():
+        identity = re.search(r'SH2Module module\s*=\s*\{"BOOT",\s*0x([0-9A-Fa-f]+)u,\s*(\d+)u,\s*0x([0-9A-Fa-f]+)u',table.read_text())
+        if identity:
+            base,size,crc = int(identity[1],16),int(identity[2]),int(identity[3],16)
+            hooks = vertex_hooks_for_identity(base,size,crc)
+            files = sorted(set(re.findall(r'p_boot_\d+\.cpp',(generated/'CMakeLists.txt').read_text())))
+            source = '\n'.join((generated/name).read_text() for name in files)
+            unobserved = missing_vertex_hooks(source,hooks)
+            if unobserved:missing.append(dict(module=name,presentation_hooks=[f'{address:08X}' for address in unobserved]))
 blockers = dict(mapping_or_entry=len(report['blockers']),
                 indirect_sites=sum(r.get('discovery',{}).get('unresolved indirect',0) for r in report['modules']),
                 discovery_problems=sum(len(r.get('problems',[])) for r in report['modules']),

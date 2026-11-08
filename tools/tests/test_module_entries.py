@@ -4,7 +4,27 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries
+from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries, vertex_producer_hooks, missing_vertex_hooks
+from unittest.mock import patch
+
+class VertexProducerHooks(unittest.TestCase):
+    def test_all_emitted_copies_require_the_instruction_observer(self):
+        observed='c.r[5] >>= 16; sh2_hook(c, 0x06000010u); // 06000010 shlr16 r5\n'
+        bypassed='c.r[5] >>= 16; // 06000010 shlr16 r5\n'
+        self.assertEqual(missing_vertex_hooks(observed,{0x06000010}),[])
+        self.assertEqual(missing_vertex_hooks('',{0x06000010}),[0x06000010])
+        self.assertEqual(missing_vertex_hooks(observed+bypassed,{0x06000010}),[0x06000010])
+    def test_reviewed_profiles_get_all_three_entries_and_queue(self):
+        for size,crc,formatter,queue in [(117672,0xEBEEDDFA,0x06017144,0x06016700),(123940,0xCC57FA60,0x06016A38,0x06015FEC),(123872,0x40B12530,0x060169F0,0x06015F9C),(124272,0xA9FE4141,0x06016A70,0x06015FE4)]:
+            # Invented zero-filled data; real local BOOT identity/execution is
+            # checked separately by check-vertex-producers.py.
+            with patch('zlib.crc32',return_value=crc):
+                self.assertEqual(vertex_producer_hooks(bytes(size),0x06004000),{formatter,formatter+12,formatter+20,queue})
+                self.assertFalse(vertex_producer_hooks(bytes(size),0x06004002))
+                self.assertFalse(vertex_producer_hooks(bytes(size+1),0x06004000))
+
+    def test_unknown_and_corrupt_images_do_not_get_hooks(self):
+        self.assertFalse(vertex_producer_hooks(bytes(123940),0x06004000))
 
 class RegisteredCallbacks(unittest.TestCase):
     def code(self,start=0):

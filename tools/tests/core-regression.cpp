@@ -89,6 +89,9 @@ int main() {
     sh2_call(cpu, modules[0].base);
     check(presentation_events==std::vector<int>({0,1,2}),"presentation observer must see entry, callee, then return");
     presentation_events.clear();
+    sh2_hook(cpu,modules[0].base+4);
+    check(presentation_events==std::vector<int>({0}),"instruction observer must also see intra-function dispatch paths");
+    presentation_events.clear();
     check(calls == 1 && starts == 0, "active returning module must not become a program restart after data mutation");
     check(sh2_mem_write(modules[12].base, newer, 8), "load overlapping replacement");
     sh2_call(cpu, modules[12].base);

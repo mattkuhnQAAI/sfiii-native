@@ -69,3 +69,36 @@ def arithmetic_shift_entries(data: bytes, base: int) -> set[int]:
                                if off not in (18, 38, 70, 74))
             at = data.find(pattern, at + 1)
     return entries
+def vertex_hooks_for_identity(base: int, size: int, crc: int) -> set[int]:
+    """Observe reviewed formatter/queue instructions, including internal jumps.
+
+    Their first instructions change only r0/r5, leaving point pointers, command
+    pointer, GBR and PR intact for the presentation observer. Unknown BOOT
+    revisions must acquire their own producer review before emission is enabled.
+    """
+    profiles = {
+        (117672, 0xEBEEDDFA): (0x06017144, 0x06016700),
+        (123940, 0xCC57FA60): (0x06016A38, 0x06015FEC),
+        (123872, 0x40B12530): (0x060169F0, 0x06015F9C),
+        (124272, 0xA9FE4141): (0x06016A70, 0x06015FE4),
+    }
+    selected = profiles.get((size, crc)) if base == 0x06004000 else None
+    if selected is None:return set()
+    formatter, queue = selected
+    return {formatter, formatter+12, formatter+20, queue}
+
+
+def vertex_producer_hooks(data: bytes, base: int) -> set[int]:
+    import zlib
+    return vertex_hooks_for_identity(base, len(data), zlib.crc32(data))
+
+
+def missing_vertex_hooks(source: str, hooks: set[int]) -> list[int]:
+    """Check every emitted copy, including branches that stay in one function."""
+    import re
+    missing = []
+    for address in sorted(hooks):
+        lines = re.findall(rf'(?m)^[^\n]*// {address:08X} [^\n]*$', source)
+        marker = f'sh2_hook(c, 0x{address:08X}u);'
+        if not lines or any(marker not in line for line in lines):missing.append(address)
+    return missing

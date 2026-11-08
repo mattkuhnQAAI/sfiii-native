@@ -32,8 +32,11 @@ bool verified_producer(const sf3::VertexProducerProfile& profile) {
     for(uint32_t a=profile.formatter;a<profile.formatter+280;++a){hash^=ld8(a);hash*=1099511628211ull;}
     if(hash!=0x888056474C98BA8Dull)return false;
     hash=14695981039346656037ull;
-    for(uint32_t a=profile.projection;a<profile.projection+168;++a){hash^=ld8(a);hash*=1099511628211ull;}
-    return hash==profile.projection_hash;
+    for(uint32_t a=profile.projection;a<profile.projection+profile.projection_size;++a){hash^=ld8(a);hash*=1099511628211ull;}
+    if(hash!=profile.projection_hash)return false;
+    hash=14695981039346656037ull;
+    for(uint32_t a=profile.queue;a<profile.queue+32;++a){hash^=ld8(a);hash*=1099511628211ull;}
+    return hash==profile.queue_hash;
 }
 }
 namespace sf3 {
@@ -51,7 +54,7 @@ void sf3_vertex_precision_call(SH2Context& c,uint32_t address,bool returned) {
         address=profile->queue;
     }
     const uint64_t field=sat_vblanks();if(field<last_field)reset();last_field=field;
-    if(sf3::scenario2_vertex_formatter_entry(address,profile->formatter)) {
+    if(sf3::vertex_formatter_entry(address,profile->formatter)) {
         pending_address=0;
         if(c.pr!=profile->queue || !ram(c.gbr,920) || !ram(c.r[11],32) || !verified_producer(*profile))return;
         sf3::PrecisionQuad q{};

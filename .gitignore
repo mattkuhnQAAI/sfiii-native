@@ -40,6 +40,7 @@
 !/tools/build-headless.ps1
 !/tools/build-scenario1.ps1
 !/tools/check-module-build.py
+!/tools/check-vertex-producers.py
 !/tools/validate-native-states.py
 !/tools/validate-modules.py
 !/tools/validate-game-speed.py

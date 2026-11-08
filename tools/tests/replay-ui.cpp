@@ -55,6 +55,13 @@ int main(int argc, char** argv) {
            picture.px!=std::vector<uint32_t>(320*240,0x102030))return 100;
     }
     choose(M_IMAGE_FILTER,1);
+    for(auto id:{M_VERTEX,M_HIRES})for(int enabled:{0,1}) {
+        choose(id,enabled);if(choice_at(id)!=enabled)return 109;
+        load_settings(g_cfg.settings);if(choice_at(id)!=enabled)return 110;
+        Settings persisted;bool found=false;std::vector<std::string> issues;
+        persisted.read(settings_load(g_cfg.settings,found),issues);
+        if(!found || !issues.empty() || persisted.flag("display",id==M_VERTEX?"vertex_precision":"high_resolution_backgrounds")!=bool(enabled))return 111;
+    }
     if(argc==3) {
         if(!g_gpu_active)return 97;
         resolution_set(9);choose(M_SSAA,1);

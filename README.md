@@ -4,7 +4,9 @@
 
 ## Latest improvements and highlights
 
-The v0.8.0 release includes. See the [v0.8.0 release notes](docs/release-v0.8.0.md) for the package and validation summary:
+The local display-development branch adds **9x rendering / 2160 lines**, optional **4-sample SSAA**, fullscreen and toolbar controls, display filtering, sharper supported rotating backgrounds, and guarded vertex precision for registered Scenario 1–3 BOOT families. Vertex precision and sharper backgrounds have saved menu switches. Unsupported paths retain native output. These additions are **not yet in the published v0.8.0 downloads**. See [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks).
+
+The v0.8.0 release includes the following. See the [v0.8.0 release notes](docs/release-v0.8.0.md) for its package and validation summary:
 
 - **Official widescreen support:** the registered Scenario 1–3 profiles expose a 16:9 option with GPU rendering, and Windows hybrid-GPU laptops request the high-performance GPU before SDL starts. The supported presentation for this release is **original game graphics**; turn **AI graphics** to **Off** when using 16:9. AI artwork remains an optional experiment and can misalign or pop in widescreen.
 

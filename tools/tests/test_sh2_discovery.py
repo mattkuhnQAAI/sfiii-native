@@ -13,6 +13,15 @@ except ImportError:
 
 @unittest.skipUnless(Program,'framework source unavailable; run dependency setup')
 class DelaySlots(unittest.TestCase):
+    def test_instruction_hook_survives_a_direct_internal_branch(self):
+        from saturnrecomp.recomp.emit import Body
+        base=0x06000000
+        data=b''.join(w.to_bytes(2,'big') for w in [0xE500,0xA000,0x0009,0xE501,0x000B,0x0009])
+        program=Program(Image(data,base),[base])
+        body=Body(program,program.funcs[base],{base},hooks={base+6})
+        emitted='\n'.join(body.emit())
+        self.assertIn('goto L_06000006',emitted)
+        self.assertRegex(emitted,r'L_06000006:\n[^\n]*sh2_hook\(c, 0x06000006u\)')
     def test_control_transfer_in_a_delay_slot_is_not_speculative_code(self):
         # Includes non-delayed conditional branches, which also cause slot-illegal exceptions.
         for slot in [0x8900,0x8B00,0x8D00,0x8F00,0xA000,0xB000,0x402B,0x400B,0x000B,0x002B,0x0023,0x0003,0xC300]:

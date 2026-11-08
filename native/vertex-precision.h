@@ -7,20 +7,44 @@
 #include <map>
 
 namespace sf3 {
-struct VertexProducerProfile {uint32_t size,crc,formatter,queue,projection;uint64_t projection_hash;};
+struct VertexProducerProfile {
+    uint32_t size,crc,formatter,queue,projection,projection_size;
+    uint64_t projection_hash,queue_hash;
+};
 inline const VertexProducerProfile* vertex_producer_profile(uint32_t base,uint32_t size,uint32_t crc) {
     static constexpr VertexProducerProfile profiles[]={
-        {123940,0xCC57FA60,0x06016A38,0x06015FEC,0x06015E12,0xACC79B5D28DDFB5Cull},
-        {123872,0x40B12530,0x060169F0,0x06015F9C,0x06015DC2,0x1DCE2733D8154C3Cull}
+        {117672,0xEBEEDDFA,0x06017144,0x06016700,0x060162E4,768,0xC4F6C057FF2ACCF2ull,0x6012AB800F040153ull},
+        {123940,0xCC57FA60,0x06016A38,0x06015FEC,0x06015BC8,768,0xF69DA0ED10140455ull,0x4FD09F61C9810747ull},
+        {123872,0x40B12530,0x060169F0,0x06015F9C,0x06015B80,760,0xBD773CC451FD92E5ull,0x4FD09F61C9810747ull},
+        {124272,0xA9FE4141,0x06016A70,0x06015FE4,0x06015BC0,760,0xBD773CC451FD92E5ull,0x02E5E17418A4A8C4ull}
     };
     if(base!=0x06004000)return nullptr;
     for(const auto& profile:profiles)if(profile.size==size && profile.crc==crc)return &profile;
     return nullptr;
 }
-inline bool scenario2_vertex_formatter_entry(uint32_t address,uint32_t base=0x06016A38) {
+inline bool vertex_formatter_entry(uint32_t address,uint32_t base) {
     return address==base || address==base+12 || address==base+20;
 }
 struct ProjectedPoint { uint32_t packed; int32_t x,y,z; };
+inline void limit_projected_point(std::array<double,2>& precise) {
+    // Follow the reviewed producer's integer decisions and four refinement
+    // steps, retaining fractional coordinates alongside its arithmetic shifts.
+    std::array<int64_t,2> integer{int64_t(std::floor(precise[0])),int64_t(std::floor(precise[1]))};
+    bool changed=false;
+    for(int axis=0;axis<2;++axis)for(int sign:{1,-1})
+        while(integer[axis]*sign>512) {
+            for(int c=0;c<2;++c){integer[c]>>=1;precise[c]*=.5;}changed=true;
+        }
+    if(!changed)return;
+    auto delta=integer;auto fractional_delta=precise;
+    const int axis=std::abs(integer[1])>=std::abs(integer[0])?1:0;
+    const int sign=integer[axis]<0?-1:1;
+    for(int step=0;step<4;++step) {
+        if((integer[axis]+delta[axis])*sign<=512)
+            for(int c=0;c<2;++c){integer[c]+=delta[c];precise[c]+=fractional_delta[c];}
+        for(int c=0;c<2;++c){delta[c]>>=1;fractional_delta[c]*=.5;}
+    }
+}
 inline bool recover_projected_point(const ProjectedPoint& p,int32_t projection,unsigned near_shift,
                                     std::array<float,2>& result) {
     if(projection<=0 || near_shift>28 || p.z<=0)return false;
@@ -31,9 +55,11 @@ inline bool recover_projected_point(const ProjectedPoint& p,int32_t projection,u
     if(ratio>std::numeric_limits<int32_t>::max())return false;
     // The producer replaces X bit zero with clip status. Dropping it leaves
     // at most one 16.16 unit of uncertainty, never an inferred whole pixel.
-    const double xy[]={double(int64_t(p.x&~1)*ratio)/4294967296.0,
-                       double(int64_t(p.y)*ratio)/4294967296.0};
+    std::array<double,2> xy{double(int64_t(p.x&~1)*ratio)/4294967296.0,
+                          double(int64_t(p.y)*ratio)/4294967296.0};
     const int native[]={int16_t(p.packed>>16),int16_t(p.packed)};
+    for(double value:xy)if(!std::isfinite(value) || std::abs(value)>1073741824.0)return false;
+    if(std::floor(xy[0])!=native[0] || std::floor(xy[1])!=native[1])limit_projected_point(xy);
     for(int c=0;c<2;++c) {
         if(!std::isfinite(xy[c]) || native[c]<-4096 || native[c]>4095 || std::floor(xy[c])!=native[c])return false;
         result[c]=float(xy[c]);
