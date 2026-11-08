@@ -120,6 +120,20 @@ class DelaySlotBounds(unittest.TestCase):
         img=Image(bytes.fromhex('000bd0ff'),BASE)
         self.assertIn('delay-slot target',plausible_code(img,BASE,set()))
 
+    def test_in_bounds_delay_slot_literal_is_allowed(self):
+        img=Image(bytes.fromhex('000bd000deadbeef'),BASE)
+        self.assertIsNone(plausible_code(img,BASE,set()))
+
+    def test_pointer_overlapping_the_second_half_of_a_pool_word_is_not_scanned(self):
+        raw=bytearray(0x200)
+        raw[:6]=bytes.fromhex('9081000b0009') # mov.w literal at +0x106
+        raw[0x6c:0x72]=bytes.fromhex('740a000b2411')
+        raw[0x104:0x108]=(BASE+0x6c).to_bytes(4,'big')
+        img=Image(bytes(raw),BASE)
+        accepted,rows=data_table_entries(img,Program(img,[BASE]))
+        self.assertNotIn(BASE+0x6c,accepted)
+        self.assertFalse(any(row[0]==BASE+0x6c for row in rows))
+
 
 if __name__ == "__main__":
     unittest.main()

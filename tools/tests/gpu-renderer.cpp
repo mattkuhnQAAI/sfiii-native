@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <cstdio>
+#include <cmath>
 static void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 static uint32_t rgb555(uint16_t d){const unsigned r=d&31,g=d>>5&31,b=d>>10&31;return ((r<<3|r>>2)<<16)|((g<<3|g>>2)<<8)|(b<<3|b>>2);}
 static Frame fixture(int w=4,int h=4) {
