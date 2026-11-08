@@ -220,7 +220,7 @@ int main(int argc,char** argv) {
         }
         // Opaque rotation-plane samples become genuinely finer, preserving 1x
         // and exact native centers while traversing source texels and map edges.
-        for(int colors:{0,1,2,3})for(bool bitmap:{false,true})for(bool flip:{false,true}) {
+        for(int colors:{0,1,2,3,4})for(bool bitmap:{false,true})for(bool flip:{false,true}) {
             auto f=fixture(4,4);auto r=std::make_shared<GpuRotation>();f.rotation=r;
             auto* d=r->descriptor;d[0]=(bitmap?1:0)|4;d[1]=colors;d[3]=d[4]=1;
             d[5]=0x2000;d[6]=512;d[7]=256;d[11]=bitmap?512:2048;d[12]=bitmap?256:2048;
@@ -235,6 +235,7 @@ int main(int argc,char** argv) {
                 unsigned i=y*(bitmap?512:8)+x;
                 if(colors==0) {if(!(i&1))byte(i/2,uint8_t(((x%4+1)<<4)|((x+1)%4+1)));}
                 else if(colors==1)byte(i,x%4+1);
+                else if(colors==4) {uint32_t p=palette[x%4];word(i*4,uint16_t(0x8000|(p&255)));word(i*4+2,uint16_t(((p>>16)&255)|(p&0xFF00)));}
                 else word(i*2,colors==2?uint16_t(x%4+1):rgb[x%4]);
             }
             if(!bitmap)for(unsigned i=0;i<0x2000;i+=2)word(0x40000+i,flip?0x400:0);
@@ -255,6 +256,28 @@ int main(int argc,char** argv) {
                 ++cases;
             }
             if(colors==1 && bitmap && !flip) {
+                d[0]|=16;byte(1,0);r->palette[0]=0xFF00FF;
+                auto transparent=rendered(gpu,f,5);
+                check(transparent.px[5]==f.px[1],"Transparent subpixel must retain native silhouette rather than reveal palette zero");++cases;
+                byte(1,2);d[0]&=~16u;
+                for(bool add:{false,true})for(unsigned ratio:{0u,15u,31u}) {
+                    auto blend=[&](uint32_t color) {
+                        uint32_t result=0;for(unsigned shift:{0u,8u,16u}) {
+                            unsigned a=(color>>shift)&255,b=(0x204080u>>shift)&255;
+                            result|=(add?std::min(a+b,255u):(a*(31-ratio)+b*(ratio+1))>>5)<<shift;
+                        }return result;
+                    };
+                    for(unsigned i=0;i<f.px.size();++i) {
+                        auto& e=f.hd->composition[i];e.rotation=(e.rotation&0xFFFFFF)|0x0F000000;
+                        e.rotation_second=0x204080;e.rotation_effect=ratio|32|(add?64:0);
+                        f.px[i]=blend(e.rotation&0xFFFFFF);
+                    }
+                    auto mixed=rendered(gpu,f,5);
+                    for(int y=0;y<mixed.h;++y)for(int x=0;x<mixed.w;++x)
+                        check(mixed.px[y*mixed.w+x]==blend(expected((x+.5f)/5-.5f)),"Rotation colour calculation must blend before colour offset");
+                    ++cases;
+                }
+                for(unsigned i=0;i<f.px.size();++i) {auto& e=f.hd->composition[i];f.px[i]=e.rotation&0xFFFFFF;e.rotation=f.px[i]|0x03000000;e.rotation_second=e.rotation_effect=0;}
                 r->offset[0]=-16;r->offset[1]=32;r->offset[2]=-64;
                 auto offset=[](uint32_t rgb){return uint32_t(std::clamp(int(rgb>>16&255)-16,0,255))<<16|
                     uint32_t(std::clamp(int(rgb>>8&255)+32,0,255))<<8|uint32_t(std::clamp(int(rgb&255)-64,0,255));};

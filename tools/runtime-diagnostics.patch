@@ -226,7 +226,7 @@ index cb6af72..e1894ff 100644
          if (g_hooks[i].addr == addr) {
              if (g_hooks[i].fn) g_hooks[i].fn(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..f02fec0 100644
+index feded39..7b246b3 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -42,6 +42,22 @@
@@ -655,7 +655,7 @@ index feded39..f02fec0 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +731,49 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +731,52 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -686,13 +686,16 @@ index feded39..f02fec0 100644
 +static const int kRenderScales[]={1,2,5,9};
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
 +static const char* kRenderNames[]={"1x","2x","5x","9x"};
-+static int choice_count(MenuId id) { return id==M_IMAGE_FILTER || id==M_TOOLBAR ? 3 : id==M_AI_GRAPHICS ? (g_ai_ready[2]?4:g_ai_ready[1]?3:2) : id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
-+static const char* choice_name(MenuId id, int i) { return id==M_VERTEX || id==M_HIRES ? (i?"On":"Off") : id==M_SSAA ? (i?"4x":"Off") : id==M_IMAGE_FILTER ? (i==0?"Nearest":i==1?"Bilinear":"Integer smooth") : id==M_FULLSCREEN ? (i?"Fullscreen":"Windowed") : id==M_VSYNC ? (i?"On":"Off") : id==M_TOOLBAR ? (i==0?"Auto":i==1?"Shown":"Hidden") : id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"Animated":i==2?"Illustrated":"General") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static int choice_count(MenuId id) { return id==M_IMAGE_FILTER ? 5 : id==M_TOOLBAR ? 3 : id==M_AI_GRAPHICS ? (g_ai_ready[2]?4:g_ai_ready[1]?3:2) : id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
++static const char* choice_name(MenuId id, int i) {
++    if(id==M_IMAGE_FILTER) {static const char* names[]={"Nearest","Bilinear","Integer smooth","Bicubic","Lanczos"};return names[i];}
++    return id==M_VERTEX || id==M_HIRES ? (i?"On":"Off") : id==M_SSAA ? (i?"4x":"Off") : id==M_FULLSCREEN ? (i?"Fullscreen":"Windowed") : id==M_VSYNC ? (i?"On":"Off") : id==M_TOOLBAR ? (i==0?"Auto":i==1?"Shown":"Hidden") : id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"Animated":i==2?"Illustrated":"General") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i];
++}
  
  static int choice_at(MenuId id) {
 +    if(id==M_VERTEX || id==M_HIRES)return g_settings.flag("display",id==M_VERTEX?"vertex_precision":"high_resolution_backgrounds")?1:0;
 +    if(id==M_SSAA)return g_settings.get("display","ssaa")=="4x"?1:0;
-+    if(id==M_IMAGE_FILTER) {auto mode=g_settings.get("display","image_filter");return mode=="nearest"?0:mode=="integer_smooth"?2:1;}
++    if(id==M_IMAGE_FILTER) {auto mode=g_settings.get("display","image_filter");return mode=="nearest"?0:mode=="integer_smooth"?2:mode=="bicubic"?3:mode=="lanczos"?4:1;}
 +    if(id==M_FULLSCREEN)return (SDL_GetWindowFlags(g_win)&SDL_WINDOW_FULLSCREEN)?1:0;
 +    if(id==M_VSYNC) {int interval=0;SDL_GetRenderVSync(g_ren,&interval);return interval!=0?1:0;}
 +    if(id==M_TOOLBAR) {auto mode=g_settings.get("display","toolbar");return mode=="shown"?1:mode=="hidden"?2:0;}
@@ -707,7 +710,7 @@ index feded39..f02fec0 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +782,37 @@ static int choice_at(MenuId id) {
+@@ -468,6 +785,37 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -730,7 +733,7 @@ index feded39..f02fec0 100644
 +        sat_note("SSAA: %s; two samples per axis at enhanced GPU resolutions",i?"4x":"Off");return;
 +    }
 +    if(id==M_IMAGE_FILTER) {
-+        const char* modes[]={"nearest","bilinear","integer_smooth"};
++        const char* modes[]={"nearest","bilinear","integer_smooth","bicubic","lanczos"};
 +        g_settings.set("display","image_filter",modes[i]);host_settings_save();return;
 +    }
 +    if(id==M_FULLSCREEN) {fullscreen_set(i!=0);return;}
@@ -745,7 +748,7 @@ index feded39..f02fec0 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -480,27 +825,91 @@ static void pad_size_set(int size) {
+@@ -480,27 +828,94 @@ static void pad_size_set(int size) {
  static const char* menu_label(MenuId id) {
      switch (id) {
      case M_RESUME: return "Resume";
@@ -792,11 +795,14 @@ index feded39..f02fec0 100644
 +static const char* filter_hint() {
 +    if(choice_at(M_IMAGE_FILTER)==0)return "Sharp pixels; uneven at fractional sizes.";
 +    if(choice_at(M_IMAGE_FILTER)==1)return "Smooth resizing of the finished picture.";
++    if(choice_at(M_IMAGE_FILTER)==3)return "Smooth cubic resizing on the GPU.";
++    if(choice_at(M_IMAGE_FILTER)==4)return "Sharper three-lobe resizing on the GPU.";
 +    return "Integer nearest first, then bilinear.";
 +}
 +static const char* filter_size_hint() {
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(choice_at(M_IMAGE_FILTER)==2 && !g_image_scaler.intermediate_width())return "At this display size, uses bilinear.";
++    if(choice_at(M_IMAGE_FILTER)>=3 && !g_image_scaler.advanced_active())return "Bilinear fallback: GPU filter unavailable.";
 +#endif
 +    return "Does not change render resolution.";
 +}
@@ -847,7 +853,7 @@ index feded39..f02fec0 100644
      float k2 = std::min({dp, w / w2, h / h2}), k1 = std::min({dp, w / w1, h / h1});
      bool two = k2 >= k1;
      float u = two ? k2 : k1;
-@@ -511,15 +920,15 @@ static MenuLayout menu_layout() {
+@@ -511,15 +926,15 @@ static MenuLayout menu_layout() {
      l.title_y = l.panel.y + (pad + title / 2) * u;
      float top = l.panel.y + (pad + title) * u;
      for (int c = 0; c < 2; ++c) {
@@ -867,7 +873,7 @@ index feded39..f02fec0 100644
          }
      }
      return l;
-@@ -527,8 +936,9 @@ static MenuLayout menu_layout() {
+@@ -527,8 +942,9 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -879,7 +885,7 @@ index feded39..f02fec0 100644
  }
  
  static SDL_FRect segment(const MenuLayout& l, const MenuRow& r, int i) {
-@@ -563,12 +973,211 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +979,211 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -1092,7 +1098,7 @@ index feded39..f02fec0 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1189,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1195,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -1101,7 +1107,7 @@ index feded39..f02fec0 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -599,6 +1208,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+@@ -599,6 +1214,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
          g_menu_at = (int)i;
          SDL_FRect a = control_area(l, r);
          if (r.control == Control::Choice && inside(a, x, y)) {
@@ -1109,7 +1115,7 @@ index feded39..f02fec0 100644
              for (int k = 0; k < choice_count(r.id); ++k)
                  if (inside(segment(l, r, k), x, y)) choose(r.id, k);
          } else if (r.control == Control::Slider && inside(a, x, y)) {
-@@ -656,13 +1266,25 @@ static void on_event(const SDL_Event& e) {
+@@ -656,13 +1272,25 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1136,7 +1142,7 @@ index feded39..f02fec0 100644
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
          if (!g_menu_open) {
              if (back && !e.key.repeat) menu_open();
-@@ -686,10 +1308,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1314,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1160,7 +1166,7 @@ index feded39..f02fec0 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -824,15 +1457,20 @@ static void draw_menu() {
+@@ -824,15 +1463,20 @@ static void draw_menu() {
      ui_text(l.panel.x + 20 * u, l.title_y, 26 * u, "Paused", text, true, UiAlign::Left);
      ui_text(l.panel.x + l.panel.w - 20 * u, l.title_y, 13 * u, "Back to resume", muted, false, UiAlign::Right);
      for (int c = 0; c < 2; ++c)
@@ -1183,7 +1189,7 @@ index feded39..f02fec0 100644
          SDL_FRect a = control_area(l, r);
          switch (r.control) {
          case Control::Action:
-@@ -841,6 +1479,12 @@ static void draw_menu() {
+@@ -841,6 +1485,12 @@ static void draw_menu() {
          case Control::Choice: {
              ui_fill_rounded(a, a.h / 2, well);
              int at = choice_at(r.id);
@@ -1196,7 +1202,7 @@ index feded39..f02fec0 100644
              for (int k = 0; k < choice_count(r.id); ++k) {
                  SDL_FRect s = segment(l, r, k);
                  if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
-@@ -894,12 +1538,49 @@ static void draw_catching_up() {
+@@ -894,12 +1544,49 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1248,7 +1254,7 @@ index feded39..f02fec0 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1593,16 @@ static void draw() {
+@@ -912,15 +1599,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1268,7 +1274,7 @@ index feded39..f02fec0 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1613,98 @@ static void menu_loop() {
+@@ -931,38 +1619,98 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1388,7 +1394,7 @@ index feded39..f02fec0 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1715,20 @@ void host_present(const Frame& f) {
+@@ -973,12 +1721,20 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -1429,7 +1435,7 @@ index 80d7730..23f8231 100644
          base += t - due;
          return {};
 diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
-index 15eaa96..3597023 100644
+index 15eaa96..ffe6199 100644
 --- a/runtime/src/host/settings.cpp
 +++ b/runtime/src/host/settings.cpp
 @@ -14,8 +14,28 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
@@ -1440,7 +1446,7 @@ index 15eaa96..3597023 100644
 +toolbar = auto
 +; Synchronize presentation to the monitor. Off preserves the original pacing behavior.
 +vsync = false
-+; Final image scaling: nearest, bilinear, or integer_smooth (integer nearest then bilinear).
++; Final image scaling: nearest, bilinear, integer_smooth, bicubic, or lanczos.
 +image_filter = bilinear
 +; Four GPU samples per output pixel at enhanced resolutions: off or 4x.
 +ssaa = off
@@ -1471,7 +1477,7 @@ index 15eaa96..3597023 100644
 +    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4","5","9"}}, {"aspect", {"4:3","16:9"}},
 +    {"ssaa", {"off","4x"}},
 +    {"ai_graphics", {"off","video","anime","general"}}, {"toolbar", {"auto","shown","hidden"}},
-+    {"image_filter", {"nearest","bilinear","integer_smooth"}}};
++    {"image_filter", {"nearest","bilinear","integer_smooth","bicubic","lanczos"}}};
  
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
@@ -2911,7 +2917,7 @@ index 15c677f..55ec3b7 100644
          Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
          int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..028d8b1 100644
+index 4c8bcb1..ca6e2e0 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2931,10 +2937,12 @@ index 4c8bcb1..028d8b1 100644
  // shadows (normal, MSB and transparent) on the scroll screens, the back
  // screen and the sprite itself.
 -// What is not: RBG0 and RBG1 (rotation), line and vertical-cell scroll,
-+// What is not: RBG1, window-selected rotation parameters, line and vertical-cell scroll,
++// What is not: RBG1, window-selected rotation parameters, vertical-cell scroll,
  // mosaic, the sprite window, special priority and colour calculation by dot
- // (the special function codes), gradation of RBG0, extended colour
- // calculation, the exclusive resolutions. A register that asks for one of them is noted once.
+-// (the special function codes), gradation of RBG0, extended colour
+-// calculation, the exclusive resolutions. A register that asks for one of them is noted once.
++// (the special function codes), gradation of RBG0, the exclusive resolutions.
++// A register that asks for one of them is noted once.
  #include "saturn.h"
  #include "state.h"
  #include "video.h"
@@ -2964,16 +2972,81 @@ index 4c8bcb1..028d8b1 100644
      uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
      auto parameter = [&](uint32_t off, int bits, int shift) {
          return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
-@@ -100,7 +110,7 @@ struct Pix {
+@@ -98,9 +108,24 @@ struct Pix {
+     bool spr, scc;                              // the character's special priority and colour calculation bits
+     bool msb;                                   // the colour data's MSB
      bool shade;                                 // an MSB shadow: the sprite dot at half brightness
++    bool direct;                                // RGB source rather than palette, for extended colour rules
  };
  
 -enum { L_SPRITE, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
++// VDP2 manual 12.1, table 12.2: fixed 4:0:0, 2:2:0 or
++// 2:1:1 weights, applied to quarter-intensity channel values.
++static uint32_t extended_second(const Pix& second,const Pix& third,const Pix& fourth,
++                                bool inserted,int color_mode) {
++    if(!second.cc || (color_mode!=0 && !third.direct))return second.rgb;
++    const bool four=inserted && third.cc && (color_mode==0 || fourth.direct);
++    uint32_t result=0;
++    for(int shift=0;shift<24;shift+=8) {
++        const unsigned a=(second.rgb>>shift&255)>>2,b=(third.rgb>>shift&255)>>2,c=(fourth.rgb>>shift&255)>>2;
++        result|=(a*2+(four?b+c:b*2))<<shift;
++    }
++    return result;
++}
++
 +enum { L_SPRITE, L_RBG0, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
  
  // ---- the scroll screens ---------------------------------------------------------------------
  struct Nbg {
-@@ -267,6 +277,276 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+@@ -118,6 +143,8 @@ struct Nbg {
+     int32_t sx, sy, dx, dy;                     // scroll and increments, 8 fraction bits
+     uint8_t prio, ratio;
+     bool cc, offset, offset_b;
++    uint8_t line_flags=0,line_step=1;
++    uint32_t line_table=0;
+ };
+ 
+ static void setup_nbg(int n, Nbg& s) {
+@@ -184,6 +211,22 @@ static void setup_nbg(int n, Nbg& s) {
+     s.cc = reg(0xEC) >> n & 1;
+     s.offset = reg(0x110) >> n & 1;
+     s.offset_b = reg(0x112) >> n & 1;
++    if(n<2) {
++        const unsigned control=reg(0x9A)>>(n*8);
++        s.line_flags=control&14;s.line_step=uint8_t(1u<<((control>>4)&3));
++        if((reg(0)&0xC0)==0x80)s.line_step*=2;
++        s.line_table=((uint32_t(reg(0xA0+n*4)&7)<<16)|(reg(0xA2+n*4)&0xFFFE))*2;
++    }
++}
++
++static void nbg_line(Nbg& s,int y) {
++    if(!s.line_flags)return;
++    const unsigned count=((s.line_flags>>1)&1)+((s.line_flags>>2)&1)+((s.line_flags>>3)&1);
++    uint32_t address=s.line_table+uint32_t(y/s.line_step)*count*4;
++    auto value=[&] {uint32_t v=(uint32_t(vw(address))<<16)|vw(address+2);address+=4;return v;};
++    if(s.line_flags&2)s.sx+=int32_t((value()>>8)&0x7FFFF);
++    if(s.line_flags&4)s.sy+=int32_t((value()>>8)&0x7FFFF)-(y-y%s.line_step)*s.dy;
++    if(s.line_flags&8)s.dx=int32_t((value()>>8)&0x7FF);
+ }
+ 
+ // the dot of a character (or bitmap) at (x, y) in its own pixels: false if transparent
+@@ -198,6 +241,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         uint16_t w = vw(base + i * 2);
+         if (!(w & 0x8000) && !s.opaque) return false;
+         p.rgb = rgb555(w);
++        p.direct = true;
+         p.msb = w >> 15;
+         return true;
+     }
+@@ -205,6 +249,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+         uint32_t w = (uint32_t)vw(base + i * 4) << 16 | vw(base + i * 4 + 2);
+         if (!(w & 0x80000000u) && !s.opaque) return false;
+         p.rgb = (w & 0xFF) << 16 | (w & 0xFF00) | (w >> 16 & 0xFF);
++        p.direct = true;
+         p.msb = w >> 31;
+         return true;
+     }
+@@ -267,6 +312,277 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
      return dot(s, base, px & 7, py & 7, 8, pal, p);
  }
  
@@ -3214,11 +3287,12 @@ index 4c8bcb1..028d8b1 100644
 +static std::shared_ptr<GpuRotation> rotation_presentation(Rbg r,int height) {
 +    // First enhancement: one opaque plane, fixed priority, no per-dot coefficients.
 +    // CPU pixels continue to decide visibility, windows and colour-calculation order.
-+    if(!g_hires_backgrounds || !r.on || r.mode>1 || r.cc || ((reg(0xEA)>>8)&3))return {};
++    if(!g_hires_backgrounds || !r.on || r.mode>1 || ((reg(0xEA)>>8)&3) ||
++       (r.cc && (((reg(0xEC)&0x8400)==0x0400) || ((reg(0xEE)>>8)&3))))return {};
 +    const int selected=r.mode==1?1:0;const auto& p=r.par[selected];const auto& s=p.chr;
-+    if(!s.opaque || s.colors>3 || (p.coef && r.perdot && p.dkax))return {};
++    if(s.colors>4 || (p.coef && r.perdot && p.dkax))return {};
 +    auto result=std::make_shared<GpuRotation>();auto* d=result->descriptor;
-+    d[0]=(s.bitmap?1:0)|(s.cell2x2?2:0)|(s.word1?4:0)|(s.cnsm?8:0);
++    d[0]=(s.bitmap?1:0)|(s.cell2x2?2:0)|(s.word1?4:0)|(s.cnsm?8:0)|(!s.opaque?16:0);
 +    d[1]=s.colors;d[2]=s.supp;d[3]=s.plane_w;d[4]=s.plane_h;d[5]=s.page_bytes;
 +    d[6]=s.bm_w;d[7]=s.bm_h;d[8]=s.bm_addr;d[9]=s.bm_pal;d[10]=s.caos;
 +    d[11]=s.bitmap?s.bm_w:s.plane_w*2048;d[12]=s.bitmap?s.bm_h:s.plane_h*2048;
@@ -3250,16 +3324,29 @@ index 4c8bcb1..028d8b1 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +647,7 @@ static void note_unsupported() {
+@@ -292,6 +608,7 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+     SpriteDot kind = S_DOT;
+     if (mixed && (d & 0x8000)) {
+         p.rgb = rgb555(d);
++        p.direct = true;
+         p.prio = prio_of(0);
+         p.ratio = ratio_of(0);
+         msb = true;
+@@ -367,11 +684,10 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
 -    once(0, reg(0x20) & 0x30, "RBG0/RBG1", reg(0x20));
+-    once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
 +    once(0, (reg(0x20) & 0x20) || ((reg(0x20) & 0x10) && (reg(0xB0) & 3) == 3), "RBG1 or rotation parameters chosen by window", reg(0x20));
-     once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
++    once(1, reg(0x9A) & 0x0101, "vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +673,38 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+-    once(4, (reg(0xEC) & 0x8400) == 0x0400 && reg(0xEC) & 0x5F, "extended colour calculation (CCCTL)", reg(0xEC));
+     once(8, reg(0xEC) & 0x8000 && (reg(0xEC) >> 12 & 7) == 1, "gradation of RBG0 (CCCTL)", reg(0xEC));
+     once(5, (reg(0x00) & 7) >= 4, "an exclusive resolution (TVMD)", reg(0x00));
+     auto mode = [](uint16_t r, int m) {
+@@ -393,23 +709,46 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -3300,8 +3387,19 @@ index 4c8bcb1..028d8b1 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +720,7 @@ void vdp2_compose(Frame& f) {
+     bool second_ratio = reg(0xEC) >> 9 & 1;      // CCRTMD: the ratio is the second image's
++    const bool extended=(reg(0xEC)&0x8400)==0x0400 && (reg(0x00)&7)<2;
++    const int color_mode=cram_mode();
+     Pix back{};
++    back.direct=true;
+     back.offset = reg(0x110) >> 5 & 1;
+     back.offset_b = reg(0x112) >> 5 & 1;
+     back.ratio = (uint8_t)(reg(0x10E) >> 8 & 0x1F);
+@@ -418,9 +757,10 @@ void vdp2_compose(Frame& f) {
+     uint32_t lc_table = ((uint32_t)(reg(0xA8) & 7) << 16 | reg(0xAA)) * 2;
+     bool lc_lines = reg(0xA8) & 0x8000;
      Pix line_colour{};
++    line_colour.cc=(reg(0xEC)&0x20)!=0;
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
 -    uint8_t wctl[L_COUNT] = {(uint8_t)(reg(0xD4) >> 8), (uint8_t)reg(0xD0), (uint8_t)(reg(0xD0) >> 8),
@@ -3309,7 +3407,7 @@ index 4c8bcb1..028d8b1 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +728,41 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +768,43 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -3336,6 +3434,8 @@ index 4c8bcb1..028d8b1 100644
 +    std::vector<std::array<Pix,L_COUNT-1>> background_row(scale>1 ? f.w/scale : 0);
 +    for (int output_y = begin; output_y < end; ++output_y) {
 +        const int y=output_y/scale,suby=output_y%scale;
++        Nbg line_nbg[4];std::copy(nbg,nbg+4,line_nbg);
++        for(int n=0;n<2;++n)nbg_line(line_nbg[n],y);
          int line = dd ? y >> 1 : y;
 +        if (rbg.on) rbg_line(rbg, y);
          Win win[2] = {window_line(0, y, dd), window_line(1, y, dd)};
@@ -3352,7 +3452,7 @@ index 4c8bcb1..028d8b1 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +770,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,39 +812,64 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -3361,8 +3461,9 @@ index 4c8bcb1..028d8b1 100644
 +                const int x=output_x/scale,subx=output_x%scale;
                  Pix p{};
 -                bool drawn = grad == L_SPRITE ? sprite_pixel(sprite_dot(x, y, dd), p) == S_DOT
+-                                              : nbg[grad - L_NBG0].on && nbg_pixel(nbg[grad - L_NBG0], x, y, p);
 +                bool drawn = grad == L_SPRITE ? sprite_pixel(sprite_dot(x, y, dd,subx,suby), p) == S_DOT
-                                               : nbg[grad - L_NBG0].on && nbg_pixel(nbg[grad - L_NBG0], x, y, p);
++                                              : line_nbg[grad - L_NBG0].on && nbg_pixel(line_nbg[grad - L_NBG0], x, y, p);
                  uint32_t here = drawn ? p.rgb : 0;
                  if (x == 0) prev[0] = prev[1] = here;
 -                blur[x] = avg(avg(prev[0], prev[1]), here);
@@ -3381,11 +3482,15 @@ index 4c8bcb1..028d8b1 100644
 +                if(!parallel)provenance_hash(f,dst);continue;
 +            }
              Pix l[L_COUNT];
-             int top = -1, second = -1;
+-            int top = -1, second = -1;
++            int top = -1, second = -1, third = -1;
              auto consider = [&](int i) {
-@@ -458,16 +797,32 @@ void vdp2_compose(Frame& f) {
-                 if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
-                 else if (second < 0 || l[i].prio > l[second].prio) second = i;
+                 if (!l[i].prio) return;
+-                if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
+-                else if (second < 0 || l[i].prio > l[second].prio) second = i;
++                if (top < 0 || l[i].prio > l[top].prio) {third=second;second = top; top = i; }
++                else if (second < 0 || l[i].prio > l[second].prio) {third=second;second = i;}
++                else if(third<0 || l[i].prio>l[third].prio)third=i;
              };
 -            // in the order that wins ties: sprite, then NBG0..NBG3
 +            // in the order that wins ties: sprite, RBG0, then NBG0..NBG3
@@ -3419,7 +3524,12 @@ index 4c8bcb1..028d8b1 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +840,12 @@ void vdp2_compose(Frame& f) {
+-                const Nbg& s = nbg[n];
++                const Nbg& s = line_nbg[n];
+                 if (!s.on || !s.prio || windowed(wctl[L_NBG0 + n], win, x)) continue;
+                 if (!nbg_pixel(s, x, y, p)) continue;
+                 p.prio = s.prio;
+@@ -485,10 +883,17 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -3430,11 +3540,16 @@ index 4c8bcb1..028d8b1 100644
 +            Pix u = top >= 0 && (lnclen >> (top == L_SPRITE ? 5 : top == L_RBG0 ? 4 : top - L_NBG0) & 1) && grad < 0 ? line_colour
                    : second >= 0 ? l[second] : back;
 -            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[x];
++            if(extended) {
++                const bool inserted=top>=0 && (lnclen>>(top==L_SPRITE?5:top==L_RBG0?4:top-L_NBG0)&1) && grad<0;
++                u.rgb=extended_second(u,inserted?(second>=0?l[second]:back):(third>=0?l[third]:back),
++                                      third>=0?l[third]:back,inserted,color_mode);
++            }
 +            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[output_x];
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +861,143 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +909,155 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -3452,14 +3567,15 @@ index 4c8bcb1..028d8b1 100644
 +                else {
 +                    auto evaluate=[&](bool present,GpuPixel* parameters) {
 +                        Pix sp{};sprite_pixel(0x8000,sp);
-+                        int a=-1,b=-1;
-+                        auto take=[&](int i) {if(!l[i].prio)return;if(a<0 || l[i].prio>l[a].prio){b=a;a=i;}else if(b<0 || l[i].prio>l[b].prio)b=i;};
++                        int a=-1,b=-1,c=-1;
++                        auto take=[&](int i) {if(!l[i].prio)return;if(a<0 || l[i].prio>l[a].prio){c=b;b=a;a=i;}else if(b<0 || l[i].prio>l[b].prio){c=b;b=i;}else if(c<0 || l[i].prio>l[c].prio)c=i;};
 +                        const Pix saved=l[L_SPRITE];l[L_SPRITE]=sp;
 +                        if(present && !windowed(wctl[L_SPRITE],win,x)) take(L_SPRITE);
 +                        for(int i=1;i<L_COUNT;++i) take(i);
 +                        const Pix& first=a>=0 ? l[a] : back;
 +                        const bool line=a>=0 && (lnclen>>(a==L_SPRITE?5:a==L_RBG0?4:a-L_NBG0)&1);
-+                        const Pix& next=line ? line_colour : b>=0 ? l[b] : back;
++                        Pix next=line ? line_colour : b>=0 ? l[b] : back;
++                        if(extended)next.rgb=extended_second(next,line?(b>=0?l[b]:back):(c>=0?l[c]:back),c>=0?l[c]:back,line,color_mode);
 +                        const bool calculation=a>=0 && first.cc && !windowed(cc_wctl,win,x);
 +                        uint32_t value=first.rgb;
 +                        const int ratio=second_ratio ? next.ratio : first.ratio;
@@ -3479,6 +3595,9 @@ index 4c8bcb1..028d8b1 100644
 +                                unsigned off=(first.offset_b?0x11A:0x114)+ch*2;
 +                                parameters->offset[ch]=(int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23;
 +                            }
++                            // Nested colour operations with the variable sprite
++                            // below another screen retain native coverage.
++                            if(extended && a!=L_SPRITE && (b==L_SPRITE || c==L_SPRITE))parameters->mode=0x100;
 +                        }
 +                        l[L_SPRITE]=saved;return value;
 +                    };
@@ -3502,18 +3621,26 @@ index 4c8bcb1..028d8b1 100644
 +                            e.offset[ch]=(int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23;
 +                        }
 +                    }
++                    if(extended && raw && top!=L_SPRITE)e.mode=0x100;
 +                }
 +            }
 +            if(gpu && f.rotation) {
 +                auto& e=f.hd->composition[size_t(y)*f.w+output_x];
 +                if(!(e.mode&0x100)) {
-+                    int background=-1;
-+                    for(int i=1;i<L_COUNT;++i)if(l[i].prio && (background<0 || l[i].prio>l[background].prio))background=i;
++                    int background=-1,below=-1;
++                    for(int i=1;i<L_COUNT;++i)if(l[i].prio) {
++                        if(background<0 || l[i].prio>l[background].prio){below=background;background=i;}
++                        else if(below<0 || l[i].prio>l[below].prio)below=i;
++                    }
 +                    unsigned roles=top==L_RBG0 && !shaded ? 1:0;
 +                    if(background==L_RBG0) {
 +                        roles|=2; // Hypothetical sprite absence reveals the opaque floor.
 +                        if(e.mode==0)roles|=4|8; // Fixed visible floor, including its offset.
 +                        else if((e.mode==2 || e.mode==3) && !(lnclen&(1<<5)))roles|=4;
++                        const Pix& next=(lnclen&(1<<4))?line_colour:below>=0?l[below]:back;
++                        const bool calculation=l[L_RBG0].cc && !windowed(cc_wctl,win,x);
++                        e.rotation_second=next.rgb;
++                        e.rotation_effect=(second_ratio?next.ratio:l[L_RBG0].ratio)|(calculation?32u:0u)|(add?64u:0u);
 +                    }
 +                    e.rotation=roles ? (roles<<24)|(l[L_RBG0].rgb&0xFFFFFF):0;
 +                }
@@ -3648,7 +3775,7 @@ index 88d1642..617ad4d 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..daed7cf 100644
+index ebaa466..7935bb3 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3684,7 +3811,7 @@ index ebaa466..daed7cf 100644
 +struct HdTexture { int w=0,h=0; uint64_t fingerprint=0; std::vector<uint32_t> rgba; std::vector<uint16_t> raw; };
 +struct HdQuad { float xy[8]{},shade[12]{}; bool hflip=false,vflip=false; std::shared_ptr<HdTexture> texture;
 +    int clip[6]{};uint32_t gpu_flags=0;bool gpu_eligible=false; };
-+struct GpuPixel { uint32_t absent=0,constant=0,mode=0,ratio=0;int32_t offset[3]{};uint32_t owner=0,rotation=0; };
++struct GpuPixel { uint32_t absent=0,constant=0,mode=0,ratio=0;int32_t offset[3]{};uint32_t owner=0,rotation=0,rotation_second=0,rotation_effect=0; };
 +struct GpuRotation { uint32_t descriptor[32]{};int32_t offset[3]{};
 +    std::vector<float> rows;std::vector<uint32_t> vram,palette; };
 +void vdp2_hires_backgrounds(bool enabled); // Optional presentation sampling; native pixels stay authoritative.

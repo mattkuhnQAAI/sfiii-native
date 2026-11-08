@@ -22,7 +22,7 @@ def metal_binding_flags(name):
 
 
 def validate_metal_bindings(code,name):
-    if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
+    if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or (name!='display-filter' and '[[buffer(1)]]' not in code):
         raise ValueError('Metal shader resource mapping was not verified.')
     if name=='geometry':
         for variable,kind,slot in [('Pass','buffer',0),('scene','buffer',1),('textures','buffer',2),
@@ -30,6 +30,10 @@ def validate_metal_bindings(code,name):
             pattern=r'\b'+variable+r'\s*\[\['+kind+r'\('+str(slot)+r'\)\]\]'
             if not re.search(pattern,code):
                 raise ValueError('Metal geometry shader binding does not match SDL: '+variable)
+    if name=='display-filter':
+        for variable,kind,slot in [('Pass','buffer',0),('picture','texture',0)]:
+            if not re.search(r'\b'+variable+r'\s*\[\['+kind+r'\('+str(slot)+r'\)\]\]',code):
+                raise ValueError('Metal display filter binding does not match SDL: '+variable)
 
 
 def sha(path):
@@ -157,7 +161,7 @@ def main():
         cross=cache/'build-cross'
         run([cmake,'-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
         run([cmake,'--build',cross,'--parallel',jobs])
-        for name in ['geometry','hd-assets']:
+        for name in ['geometry','hd-assets','display-filter']:
             run([cross/'spirv-cross',shaders/(name+'.spv'),'--msl','--msl-version','20100',*metal_binding_flags(name),'--rename-entry-point','main','fragmentMain','frag','--output',shaders/(name+'.msl')])
             code=(shaders/(name+'.msl')).read_text()
             validate_metal_bindings(code,name)

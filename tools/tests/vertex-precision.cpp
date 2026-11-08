@@ -7,6 +7,18 @@ static void check(bool v,const char* why){if(!v){std::fprintf(stderr,"FAIL: %s\n
 static uint32_t packed(int x,int y){return uint32_t(uint16_t(x))<<16|uint16_t(y);}
 int main() {
     unsigned cases=0;
+    for(int i=0;i<1000;++i) {
+        const int32_t projection=160*65536,depth=1024*65536+i*31;
+        const int64_t reciprocal=int64_t(projection)*65536/depth;
+        sf3::ProjectedPoint p{0,35*65536+16384,-21*65536+32768,depth};
+        const double oldx=double(int64_t(p.x&~1)*reciprocal)/4294967296.0,oldy=double(int64_t(p.y)*reciprocal)/4294967296.0;
+        p.packed=packed(int(std::floor(oldx)),int(std::floor(oldy)));
+        std::array<float,2> out{};
+        check(sf3::recover_projected_point(p,projection,2,out),"camera-depth sweep accepted");
+        check(std::abs(out[0]-double(p.x)*projection/(double(depth)*65536))<.000002 &&
+              std::abs(out[1]-double(p.y)*projection/(double(depth)*65536))<.000002,"camera perspective follows continuous division rather than reciprocal steps");
+        ++cases;
+    }
     const auto* modern=sf3::vertex_producer_profile(0x06004000,123940,0xCC57FA60);
     const auto* legacy=sf3::vertex_producer_profile(0x06004000,123872,0x40B12530);
     check(modern && legacy && modern->formatter!=legacy->formatter && modern->queue!=legacy->queue,"each reviewed revision selects its own producer and return site");++cases;

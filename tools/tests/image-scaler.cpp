@@ -48,9 +48,30 @@ int main(int argc,char** argv) {
     if(!scaler.draw(renderer,source,nullptr,{1,1,4,4},sf3::ImageFilter::IntegerSmooth))return 14;
     if(!scaler.draw(renderer,source,nullptr,{1,1,1,1},sf3::ImageFilter::IntegerSmooth) || scaler.intermediate_width()!=0)return 15;
     if(scaler.draw(renderer,source,nullptr,{0,0,0,5},sf3::ImageFilter::Nearest))return 16;
+    std::vector<uint32_t> cubic;
+    if(gpu)for(auto mode:{sf3::ImageFilter::Bicubic,sf3::ImageFilter::Lanczos}) {
+        SDL_RenderClear(renderer);
+        if(!scaler.draw(renderer,source,nullptr,{1,1,5,5},mode)) {std::printf("%s\n",SDL_GetError());return 17;}
+        auto sharp=read();if(sharp.size()!=49 || SDL_GetRenderTarget(renderer)!=output)return 18;
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x)
+            if((x==0 || y==0 || x==6 || y==6) && (sharp[y*7+x]&0xFFFFFF)!=0xFF00FF)return 27;
+        const auto center=(sharp[3*7+3]>>16)&255;
+        if(center<125 || center>130 || (sharp[3*7+1]&0xFFFFFF)!=0 || (sharp[3*7+5]&0xFFFFFF)!=0xFFFFFF)return 19;
+        if(sharp==samples[0] || sharp==samples[1])return 20;
+        if(mode==sf3::ImageFilter::Bicubic)cubic=sharp;else if(sharp==cubic)return 28;
+        if(!scaler.draw(renderer,source,overlay,{1,1,5,5},mode))return 21;
+        auto art=read();if(art.size()!=49 || ((art[3*7+1]>>8)&255)<100)return 22;
+        const uint32_t constant[4]={0xFF123456,0xFF123456,0xFF123456,0xFF123456};
+        SDL_UpdateTexture(source,nullptr,constant,8);
+        if(!scaler.draw(renderer,source,nullptr,{1,1,5,5},mode))return 23;
+        auto flat=read();for(int y=1;y<6;++y)for(int x=1;x<6;++x)if((flat[y*7+x]&0xFFFFFF)!=0x123456)return 24;
+        SDL_UpdateTexture(source,nullptr,pixels,8);
+        if(!scaler.draw(renderer,source,nullptr,{1,1,1,1},mode))return 25;
+        auto small=read();if(((small[1*7+1]>>16)&255)<125 || ((small[1*7+1]>>16)&255)>130)return 26;
+    }
     scaler.release();SDL_SetRenderTarget(renderer,nullptr);
     SDL_DestroyTexture(output);SDL_DestroyTexture(overlay);SDL_DestroyTexture(source);
     SDL_DestroyRenderer(renderer);backend.destroy_device();SDL_DestroyWindow(window);SDL_Quit();
-    std::puts("PASS: nearest, bilinear, integer-smooth, alpha overlay, bounds, target restoration and downsampling");
+    std::puts(gpu?"PASS: five GPU filters, alpha overlay, constant preservation, bounds, target restoration and minification":"PASS: three SDL filters, alpha overlay, bounds, target restoration and minification");
     return 0;
 }

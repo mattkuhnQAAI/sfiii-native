@@ -108,7 +108,7 @@ generate([],sys.argv[2],optest=True,native_states=True)
         f.write('\ntarget_sources(selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/state-stub.cpp")\n')
     build=out/'synthetic-build'
     check('configure-native-host',worker.configure_args(source,build,payload),compiler_env)
-    check('build-native-host',[cmake,'--build',build,'--target','saturn','selftest','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
+    check('build-native-host',[cmake,'--build',build,'--target','saturn','selftest','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','image_scaler_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
     shutil.copytree(payload/'sdl/lib',build/'lib',symlinks=True)
     check('synthetic-aot-instructions',[build/'selftest',source/'selftest/optest.txt'],required=False)
     # The current runtime prints its usage and exits 2 for --help.
@@ -122,6 +122,7 @@ generate([],sys.argv[2],optest=True,native_states=True)
     ui_env=dict(SDL_VIDEODRIVER='dummy',SF3_CONTROLLER_DIR=str(ui),SF3_REPLAY_ROOT=str(ui/'points'),SF3_REPLAY_SEED=str(seed))
     check('replay-ui',[build/'replay_ui_selftest',ui/'replay'],ui_env)
     check('native-state-ui',[build/'native_state_ui_selftest',ui/'native-states'],ui_env)
+    check('image-scaler-sdl',[build/'image_scaler_selftest'],{'SDL_VIDEODRIVER':'dummy'})
     entry=package/'Contents/MacOS/SFIII Native' if package.suffix=='.app' else package/'SFIII Native'
     check('launcher-ui',[entry,'--self-test',out/'launcher'])
     gpu,text=check('gpu-shader-cases',[build/'gpu_renderer_selftest',out/'gpu',build/'shaders'],
@@ -131,6 +132,11 @@ generate([],sys.argv[2],optest=True,native_states=True)
             gpu['status']='unavailable: this runner exposes no usable GPU/display'
         else:raise RuntimeError('GPU shader test failed:\n'+text[-6000:])
     else:gpu['status']='synthetic shader cases passed; not game/hardware validation'
+    if gpu['passed']:
+        check('image-scaler-gpu',[build/'image_scaler_selftest','--gpu'],
+              {'SF3_GPU_BACKEND':'metal' if sys.platform=='darwin' else 'vulkan','SF3_GPU_ALLOW_SOFTWARE':'1'})
+    else:
+        results.append(dict(name='image-scaler-gpu',passed=False,status='unavailable: no usable GPU/display'))
     # Move the whole application, then use its actual executable and compiler.
     relocated=out/'relocated application é'/package.name
     relocated.parent.mkdir()
@@ -165,7 +171,7 @@ target_link_libraries(relocation PRIVATE SDL3::SDL3 Threads::Threads)
     changed.extend('added: '+name for name in sorted(added))
     results.append(dict(name='package-files-unchanged',passed=not changed,changed_files=changed))
     if changed:raise RuntimeError('Validation changed packaged resources: '+', '.join(changed[:10]))
-    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name']!='gpu-shader-cases'),
+    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name'] not in {'gpu-shader-cases','image-scaler-gpu'} or not r.get('status','').startswith('unavailable:')),
                 gameplay_validated=False,transition_fixtures='unavailable: game data is never uploaded to CI',
                 physical_controller_audio_validation='unavailable',results=results)
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')

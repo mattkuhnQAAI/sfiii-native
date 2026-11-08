@@ -4,7 +4,7 @@
 
 ## Latest improvements and highlights
 
-The local display-development branch adds **9x rendering / 2160 lines**, optional **4-sample SSAA**, fullscreen and toolbar controls, display filtering, sharper supported rotating backgrounds, and guarded vertex precision for registered Scenario 1–3 BOOT families. Vertex precision and sharper backgrounds have saved menu switches. Unsupported paths retain native output. These additions are **not yet in the published v0.8.0 downloads**. See [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks).
+The local display-development branch adds **9x rendering / 2160 lines**, optional **4-sample SSAA**, fullscreen and toolbar controls, five display filters including GPU **Bicubic and Lanczos**, sharper supported rotating backgrounds, and guarded vertex precision for registered Scenario 1–3 BOOT families. Recent work reduces perspective-reciprocal stepping, implements extended background colour calculation and line scroll/zoom, and keeps audio supplied when presentation falls behind. Vertex precision and sharper backgrounds have saved menu switches. Earlier camera-angle/transform quantization and several hardware paths remain unresolved. These additions are **not yet in the published v0.8.0 downloads**. See [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks).
 
 The v0.8.0 release includes the following. See the [v0.8.0 release notes](docs/release-v0.8.0.md) for its package and validation summary:
 

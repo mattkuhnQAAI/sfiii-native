@@ -109,7 +109,7 @@ def main():
     (payload/'python/python314._pth').write_text('python314.zip\n.\n../app/tools\n../app\n',encoding='utf-8')
     shaders=payload/'shaders';shaders.mkdir()
     dxc=ROOT/'.local/dxc-1.9.2609/bin/x64/dxc.exe'
-    for name in ['geometry','hd-assets']:
+    for name in ['geometry','hd-assets','display-filter']:
         for fmt in ['dxil','spv']:
             command=[str(dxc),'-T','ps_6_0','-E','main','-O3']
             if fmt=='spv':command+=['-spirv','-fspv-target-env=vulkan1.0']

@@ -24,5 +24,14 @@ class ShaderBindings(unittest.TestCase):
         self.assertEqual(package.metal_binding_flags('hd-assets'),[])
         package.validate_metal_bindings('fragment fragmentMain(device Words& scene [[buffer(0)]], device Words& art [[buffer(1)]]) {}','hd-assets')
 
+    def test_display_filter_uses_one_uniform_and_texture_without_storage_buffers(self):
+        for uniform in [0,1]:
+            for texture in [0,1]:
+                code=(f'fragment fragmentMain(constant Params& Pass [[buffer({uniform})]], '
+                      f'texture2d<float> picture [[texture({texture})]]) {{}}')
+                if uniform==0 and texture==0:package.validate_metal_bindings(code,'display-filter')
+                else:
+                    with self.assertRaises(ValueError):package.validate_metal_bindings(code,'display-filter')
+
 
 if __name__=='__main__':unittest.main()

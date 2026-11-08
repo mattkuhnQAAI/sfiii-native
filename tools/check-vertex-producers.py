@@ -110,7 +110,10 @@ def main():
                 # and command remain local coordinates; adding it here is wrong.
                 precise = (s32(stored_x & ~1)*ratio/4294967296, s32(stored_y)*ratio/4294967296)
                 direct = tuple(math.floor(v) for v in precise) == native
-                points[case] = dict(native=native, precise=precise, direct=direct)
+                depth=max(z,minimum)
+                ideal=(s32(stored_x & ~1)*projection/(depth*65536),s32(stored_y)*projection/(depth*65536))
+                ideal=tuple(max(n,min(v,math.nextafter(float(n+1),float(n)))) for v,n in zip(ideal,native))
+                points[case] = dict(native=native, precise=ideal, direct=direct)
                 lines.append('P '+str(case)+' '+' '.join(map(str,record+(projection,near,ox,oy))))
             # Execute every actual formatter entry and both lighting flags on
             # convex invented quads. The original routine supplies corner order.
@@ -167,7 +170,7 @@ def main():
                         assert all(math.isfinite(v) for v in values)
                         assert tuple(math.floor(v) for v in values) == point['native'], 'Native pixel changed'
                         if point['direct']:
-                            assert max(abs(a-b) for a,b in zip(values, point['precise'])) < .0002, 'Fraction differs from original fixed-point projection'
+                            assert max(abs(a-b) for a,b in zip(values, point['precise'])) < .0002, 'Fraction differs from bounded high-precision perspective'
                             direct_passed += 1
                         else:ranged_passed += 1
                 else:

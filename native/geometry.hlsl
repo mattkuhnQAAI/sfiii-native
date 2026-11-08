@@ -59,7 +59,7 @@ float4 output_color(uint rgb){return float4(float3((rgb>>16)&255,(rgb>>8)&255,rg
 float4 edge_aa(Input input) {
     float4 center=picture.Load(int3(uint2(input.position.xy),0));
     uint2 cell=min(uint2(input.position.xy)/S(2),uint2(S(0)-1,S(1)-1));
-    uint p=S(4)+(cell.y*S(0)+cell.x)*10,owner=S(p+8);
+    uint p=S(4)+(cell.y*S(0)+cell.x)*12,owner=S(p+8);
     if(S(p+3)==0 || (S(p+3)&0x100) || owner==0 || owner>S(3))return float4(center.rgb,1);
     uint q=S(5)+(owner-1)*40;
     if(S(q+25)==0xFFFFFFFF || ((S(q+25)>>16)&15)!=2)return float4(center.rgb,1);
@@ -88,7 +88,7 @@ float4 edge_aa(Input input) {
 float4 ray_shadow(Input input,float4 base) {
     uint w=S(0),h=S(1),scale=S(2);
     int2 cell=int2(min(uint2(input.position.xy)/scale,uint2(w-1,h-1)));
-    uint p=S(4)+(uint(cell.y)*w+uint(cell.x))*10,owner=S(p+8),mode=S(p+3);
+    uint p=S(4)+(uint(cell.y)*w+uint(cell.x))*12,owner=S(p+8),mode=S(p+3);
     if(mode==0 || (mode&0x100) || owner==0 || owner>S(3))return base;
     uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+33);
     if(flags==0xFFFFFFFF || ((flags>>16)&15)!=2 || area<120)return base;
@@ -96,7 +96,7 @@ float4 ray_shadow(Input input,float4 base) {
     [loop]for(int step=1;step<=8;++step) {
         int2 sample_cell=cell-int2(step,(step+1)/2);
         if(any(sample_cell<0))break;
-        uint sample_p=S(4)+(uint(sample_cell.y)*w+uint(sample_cell.x))*10;
+        uint sample_p=S(4)+(uint(sample_cell.y)*w+uint(sample_cell.x))*12;
         uint blocker=S(sample_p+8);
         if(blocker<=owner || blocker>S(3))continue;
         uint block_q=S(5)+(blocker-1)*40;
@@ -143,15 +143,22 @@ bool rotation_sample(uint info,float2 position,out uint color) {
         }
         uint2 pixel=local%cs;if(hf)pixel.x=cs-1-pixel.x;if(vf)pixel.y=cs-1-pixel.y;
         base=chr*32;
-        if(flags&2)base+=(pixel.y/8*2+pixel.x/8)*(colors==0?32:colors==1?64:128);
+        if(flags&2)base+=(pixel.y/8*2+pixel.x/8)*(colors==0?32:colors==1?64:colors==4?256:128);
         index=(pixel.y&7)*8+(pixel.x&7);
     }
     if(colors==3) {
         uint raw=rotation_word(memory,base+index*2);
+        if((flags&16) && !(raw&0x8000))return false;
         color=(raw&31)*8<<16|((raw>>5)&31)*8<<8|((raw>>10)&31)*8;return true;
+    }
+    if(colors==4) {
+        uint high=rotation_word(memory,base+index*4),low=rotation_word(memory,base+index*4+2);
+        if((flags&16) && !(high&0x8000))return false;
+        color=(low&255)<<16|(low&0xFF00)|(high&255);return true;
     }
     uint value=colors==0?rotation_byte(memory,base+index/2):colors==1?rotation_byte(memory,base+index):rotation_word(memory,base+index*2)&0x7FF;
     if(colors==0)value=(index&1)?value&15:value>>4;
+    if((flags&16) && value==0)return false;
     uint entry=colors==0?pal*16+value:colors==1?(pal&0x70)*16+value:value;
     color=T(palette+((entry+S(d+10))&2047));return true;
 }
@@ -168,7 +175,7 @@ float4 main(Input input):SV_Target {
         return (aa_pass&2)!=0?ray_shadow(input,base):base;
     }
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
-    uint p=S(4)+(cell.y*w+cell.x)*10,mode=S(p+3);
+    uint p=S(4)+(cell.y*w+cell.x)*12,mode=S(p+3);
     if(mode&0x100)return output_color(S(p));
     uint native_color=S(p),absent=S(p+1),fixed=S(p+2),rotation=S(p+9),info=S(11);
     if(info!=0 && rotation!=0 && scale>1) {
@@ -177,7 +184,15 @@ float4 main(Input input):SV_Target {
         float2 sample_position=(float2(pixel)+.5)/scale-.5-float2(int(S(9)),0);
         // Retain native pixels when format/precision cannot reproduce the CPU sample.
         if(rotation_sample(info,center,original) && original==(rotation&0xFFFFFF) && rotation_sample(info,sample_position,enhanced)) {
-            uint roles=rotation>>24,offset_color=rotation_offset(info,enhanced);
+            uint roles=rotation>>24,effect=S(p+11),floor_color=enhanced;
+            if(effect&32) {
+                floor_color=0;
+                [unroll]for(uint shift=0;shift<24;shift+=8) {
+                    uint a=(enhanced>>shift)&255,b=(S(p+10)>>shift)&255,ratio=effect&31;
+                    floor_color|=((effect&64)?min(a+b,255):(a*(31-ratio)+b*(ratio+1))>>5)<<shift;
+                }
+            }
+            uint offset_color=rotation_offset(info,floor_color);
             if(roles&1)native_color=offset_color;
             if(roles&2)absent=offset_color;
             if(roles&4)fixed=(roles&8)?offset_color:enhanced;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <algorithm>
 
 namespace sf3 {
 struct VertexProducerProfile {
@@ -57,14 +58,21 @@ inline bool recover_projected_point(const ProjectedPoint& p,int32_t projection,u
     // at most one 16.16 unit of uncertainty, never an inferred whole pixel.
     std::array<double,2> xy{double(int64_t(p.x&~1)*ratio)/4294967296.0,
                           double(int64_t(p.y)*ratio)/4294967296.0};
+    const auto original=xy;
     const int native[]={int16_t(p.packed>>16),int16_t(p.packed)};
     for(double value:xy)if(!std::isfinite(value) || std::abs(value)>1073741824.0)return false;
     if(std::floor(xy[0])!=native[0] || std::floor(xy[1])!=native[1])limit_projected_point(xy);
     for(int c=0;c<2;++c) {
         if(!std::isfinite(xy[c]) || native[c]<-4096 || native[c]>4095 || std::floor(xy[c])!=native[c])return false;
-        result[c]=float(xy[c]);
-        // A float conversion at a boundary must not migrate to another cell.
-        if(std::floor(result[c])!=native[c])return false;
+        // The original integer reciprocal changes in discrete steps as camera
+        // depth moves. Recover its fractional part for presentation only.
+        // Preserve the native limiter's scale and its original integer cell.
+        const int axis=std::abs(original[0])>=std::abs(original[1])?0:1;
+        const double gain=original[axis]!=0?xy[axis]/original[axis]:1;
+        const double source=c==0?double(p.x&~1):double(p.y);
+        const double precise=source*double(projection)/(double(depth)*65536.0)*gain;
+        const float low=float(native[c]),high=std::nextafter(low+1,low);
+        result[c]=std::max(low,std::min(high,float(precise)));
     }
     return true;
 }

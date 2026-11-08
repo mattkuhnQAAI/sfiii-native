@@ -28,7 +28,7 @@ jobs:
           assert hashlib.sha256(archive.read_bytes()).hexdigest()==spec['sha256']
           with tarfile.open(archive) as t:t.extractall(root,filter='data')
           out=root/'output';out.mkdir()
-          for name in ['geometry','hd-assets']:
+          for name in ['geometry','hd-assets','display-filter']:
               subprocess.run([str(root/'bin/dxc'),'-T','ps_6_0','-E','main','-O3','-spirv','-fspv-target-env=vulkan1.0',f'native/{name}.hlsl','-Fo',str(out/(name+'.spv'))],check=True,env={**os.environ,'LD_LIBRARY_PATH':str(root/'lib')})
           PY
       - uses: actions/upload-artifact@v4

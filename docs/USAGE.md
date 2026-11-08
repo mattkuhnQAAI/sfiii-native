@@ -6,6 +6,10 @@ Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D 
 
 ## Display
 
+**Display filter** now cycles through **Nearest / Bilinear / Integer smooth / Bicubic / Lanczos**. Bicubic uses a smooth cubic kernel; Lanczos uses a sharper three-lobe kernel. Both use separable GPU passes, widen their sampling footprint when shrinking, and filter the completed game picture before the native toolbar/menu. They are independent of render resolution and SSAA. Fine-edge ringing can occur with either sharper filter. Unsupported renderers or sampling budgets retain bilinear and show a fallback message.
+
+Vertex precision also removes truncation of the perspective reciprocal within each verified native pixel cell. This reduces another source of scale stepping during camera-depth changes. It does not reconstruct rounding in earlier camera angles, object transforms or animation keyframes. Sharper backgrounds additionally handles supported transparent-plane interiors, RGB888 sources and ordinary floor colour calculation. Native silhouettes remain authoritative at transparency boundaries; complex coefficient/window combinations still use native sampling.
+
 Local audio updates avoid restarting playback on brief device read-ahead. Issue-capture PNG export runs in the background so saving a high-resolution image has less impact on music; wait briefly before requesting another capture. Closing normally finishes pending exports. These changes retain your selected resolution, SSAA and VSync settings.
 
 The local display build also catches up on repeated VDP1 display fields when rendering falls behind. Every game and audio step still runs, and new VDP1 draws are retained. This helps music stay continuous with Vertex precision at demanding resolution/SSAA settings. It keeps your chosen image quality; sustained GPU overload can still exceed the available performance.

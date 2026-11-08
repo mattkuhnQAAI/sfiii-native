@@ -96,6 +96,64 @@ TEST(rotation_bitmap_coordinates_and_transparency) {
     CHECK_EQ(f.px[5], 0x00F800);
 }
 
+TEST(line_scroll_and_zoom_follow_enabled_table_fields_intervals_and_both_backgrounds) {
+    vdp1_init();vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);
+    for(int screen:{0,1})for(int shift:{0,1,2,3})for(int flags=1;flags<8;++flags)for(bool single:{false,true}) {
+        std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);std::memset(g_vdp2_vram,0,sizeof g_vdp2_vram);
+        reg16(0,single?0x8080:0x8000);reg16(0x20,0x101<<screen);reg16(0x28,0x32<<(screen*8));
+        reg16(0xF8,1<<(screen*8));const unsigned base=0x70+screen*16;
+        reg16(base,1);reg16(base+2,0x8000);reg16(base+4,3);reg16(base+6,0x8000);
+        reg16(base+8,1);reg16(base+12,1);
+        for(unsigned y=0;y<224;++y)for(unsigned x=0;x<512;++x)
+            mem_wr(g_vdp2_vram,(y*512+x)*2,0x8000|(x&31)|((y&31)<<5),2);
+        reg16(0x9A,((flags<<1)|(shift<<4))<<(screen*8));
+        reg16(0xA0+screen*4,3);reg16(0xA2+screen*4,0x8000);
+        const int step=(1<<shift)*(single?2:1);unsigned address=0x70000;
+        for(int group=0;group<224/step+1;++group) {
+            if(flags&1){vr32(address,0x00028000);address+=4;}
+            if(flags&2){vr32(address,uint32_t(4+group*2)<<16|0x4000);address+=4;}
+            if(flags&4){vr32(address,group&1?0x00018000:0x00008000);address+=4;}
+        }
+        Frame f;vdp2_compose(f);
+        for(int y:{0,1,2,7,15})for(int x:{0,1,7,13}) {
+            const int group=y/step,dx=flags&4?(group&1?384:128):256;
+            const int sx=((flags&1?1024:384)+x*dx)>>8;
+            const int sy=flags&2?7+group*2+y%step:3+y;
+            CHECK_EQ(f.px[y*f.w+x],uint32_t((sx&31)*8)<<16|uint32_t((sy&31)*8)<<8);
+        }
+    }
+}
+
+TEST(extended_colour_calculation_obeys_layer_format_line_insertion_and_mode_limits) {
+    vdp1_init();vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);
+    rotation_bitmap();reg16(0x20,0x13);reg16(0x28,0x1212);reg16(0x3C,0x21);
+    std::memset(g_vdp2_vram+0x20000,3,512*16);
+    std::memset(g_vdp2_vram+0x40000,4,512*16);
+    mem_wr(g_vdp2_cram,2,0x7FFF,2); // line screen: white
+    mem_wr(g_vdp2_cram,6,0x001F,2); // top NBG0: red
+    mem_wr(g_vdp2_cram,8,0x7C00,2); // third NBG1: blue; RBG0 is green
+    reg16(0x78,1);reg16(0x7C,1);reg16(0x88,1);reg16(0x8C,1);
+    reg16(0xF8,0x0307);reg16(0xFC,5);reg16(0x108,15);
+    Frame f;
+    reg16(0xEC,0x0401);vdp2_compose(f);CHECK_EQ(f.px[0],0x7C7C00u); // second CC disabled
+    reg16(0xEC,0x0411);vdp2_compose(f);CHECK_EQ(f.px[0],0x7C3E3Eu); // 2:2:0
+    reg16(0xA8,3);reg16(0xAA,0x8000);mem_wr(g_vdp2_vram,0x70000,1,2);reg16(0xE8,1);
+    reg16(0xEC,0x0411);vdp2_compose(f);CHECK_EQ(f.px[0],0xF87C7Cu); // line CC disabled
+    reg16(0xEC,0x0431);vdp2_compose(f);CHECK_EQ(f.px[0],0xBA5D5Du); // 2:1:1
+    reg16(0xEC,0x0421);vdp2_compose(f);CHECK_EQ(f.px[0],0xBA7C3Eu); // third CC disabled
+    reg16(0x0E,0x1000);reg16(0xEC,0x0431);vdp2_compose(f);CHECK_EQ(f.px[0],0xF87C7Cu); // palette third in mode 1
+    reg16(0xE8,0);vdp2_compose(f);CHECK_EQ(f.px[0],0x7C7C00u); // palette third, no line insertion
+    reg16(0x28,0x3212);mem_wr(g_vdp2_vram,0x40000,0xFC00,2);
+    vdp2_compose(f);CHECK_EQ(f.px[0],0x7C3E3Eu); // RGB third allows extended calculation
+    reg16(0xE8,1);reg16(0x2A,0x3200);mem_wr(g_vdp2_vram,0,0x83E0,2);
+    reg16(0x28,0x1212);std::memset(g_vdp2_vram+0x40000,4,4);
+    vdp2_compose(f);CHECK_EQ(f.px[0],0xBA7C3Eu); // palette fourth limits to 2:2
+    reg16(0x28,0x3212);mem_wr(g_vdp2_vram,0x40000,0xFC00,2);
+    vdp2_compose(f);CHECK_EQ(f.px[0],0xBA5D5Du); // RGB third and fourth allow 2:1:1
+    reg16(0x00,0x8002);reg16(0xE8,0);vdp2_compose(f);CHECK_EQ(f.px[0],0x7C7C00u); // unavailable in hires TV mode
+    reg16(0x00,0x8000);reg16(0xEC,0x0011);vdp2_compose(f);CHECK_EQ(f.px[0],0x7C7C00u); // ECEN off
+}
+
 TEST(rotation_coefficient_transparency_and_normal_background_priority) {
     rotation_bitmap();
     // Two-word coefficient 1.0, then transparent, at VRAM 0x40000.
@@ -356,8 +414,11 @@ TEST(hires_rotation_metadata_is_optional_cached_and_rejects_unsupported_planes) 
     // Palette writes, offset writes, and coefficient state must invalidate metadata.
     mem_wr(g_vdp2_cram,4,0x001F,2);reg16(0x110,0x10);reg16(0x114,0x1F0);
     vdp2_compose(cached);CHECK_EQ(cached.rotation->palette[2],0xF80000u);CHECK_EQ(cached.rotation->offset[0],-16);
-    reg16(0x20,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Transparent plane.
-    reg16(0x20,0x1010);reg16(0xEC,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Floor colour calculation.
+    reg16(0x20,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),true); // Transparent plane interiors.
+    CHECK_EQ(cached.rotation->descriptor[0]&16,16u);
+    reg16(0x20,0x1010);reg16(0xEC,0x10);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),true); // Floor colour calculation.
+    CHECK_EQ(cached.hd->composition[0].rotation_effect&32,32u);
+    reg16(0xEC,0x410);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Nested extended calculation retains native sampling.
     reg16(0xEC,0);reg16(0xEA,0x100);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Per-character priority.
     reg16(0xEA,0);reg16(0xB0,3);vdp2_compose(cached);CHECK_EQ(bool(cached.rotation),false); // Window-selected parameters.
     reg16(0xB0,0);reg16(0x0E,0x0310);reg16(0xB4,1);vr32(0x3FE5C,0x10000);

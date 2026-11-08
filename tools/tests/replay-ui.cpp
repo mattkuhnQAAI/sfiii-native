@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     if(choice_at(M_FULLSCREEN)!=0 || !toolbar_shown() || g_settings.flag("display","fullscreen"))return 94;
     vsync_set(false);if(choice_at(M_VSYNC)!=0)return 95;
     draw(false);if(picture.px!=std::vector<uint32_t>(320*240,0x102030))return 96;
-    for(int mode=0;mode<3;++mode) {
+    for(int mode=0;mode<5;++mode) {
         choose(M_IMAGE_FILTER,mode);draw(false);
         Settings saved_filter;std::vector<std::string> issues;bool found=false;
         saved_filter.read(settings_load(g_cfg.settings,found),issues);
@@ -153,8 +153,8 @@ int main(int argc, char** argv) {
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=9 || choice_at(M_SSAA)!=1)return 104;
     choose(M_SSAA,0);click(6);
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
-    for(int cycle=0;cycle<3;++cycle) {
-        const int expected=(choice_at(M_IMAGE_FILTER)+1)%3;
+    for(int cycle=0;cycle<5;++cycle) {
+        const int expected=(choice_at(M_IMAGE_FILTER)+1)%5;
         click(5+kRenderScaleCount);
         if(choice_at(M_IMAGE_FILTER)!=expected || vdp1_render_scale()!=5 || picture.px!=initial_pixels)return 101;
     }
