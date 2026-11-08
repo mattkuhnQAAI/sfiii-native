@@ -143,7 +143,9 @@ def main():
     # once into the external cache, then relocate SDL into the player package.
     sdl_install=cache/'sdl-install' if sys.platform=='linux' else prefix
     build=cache/'build-sdl'
-    run([cmake,'-S',sources['sdl'],'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DSDL_SHARED=ON','-DSDL_STATIC=OFF',
+    # Runner images replace Xcode/SDK paths. Retain downloads/build objects,
+    # but never reuse cached compiler discovery from a previous runner image.
+    run([cmake,'--fresh','-S',sources['sdl'],'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DSDL_SHARED=ON','-DSDL_STATIC=OFF',
          '-DSDL_TESTS=OFF','-DSDL_TEST_LIBRARY=OFF','-DSDL_FRAMEWORK=OFF','-DCMAKE_INSTALL_NAME_DIR=@rpath','-DCMAKE_INSTALL_PREFIX='+str(sdl_install)])
     run([cmake,'--build',build,'--parallel',jobs])
     run([cmake,'--install',build])
@@ -151,7 +153,7 @@ def main():
     for pc in (prefix/'lib/pkgconfig').glob('*.pc'):
         text=pc.read_text()
         pc.write_text('\n'.join('prefix=${pcfiledir}/../..' if line.startswith('prefix=') else line for line in text.splitlines())+'\n')
-    run([cmake,'-S',sources['ninja'],'-B',cache/'build-ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=OFF'])
+    run([cmake,'--fresh','-S',sources['ninja'],'-B',cache/'build-ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=OFF'])
     run([cmake,'--build',cache/'build-ninja','--parallel',jobs])
     (payload/'ninja').mkdir()
     shutil.copy2(cache/'build-ninja/ninja',payload/'ninja/ninja')
@@ -159,7 +161,7 @@ def main():
     shutil.copytree(a.shaders,shaders)
     if sys.platform=='darwin':
         cross=cache/'build-cross'
-        run([cmake,'-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
+        run([cmake,'--fresh','-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
         run([cmake,'--build',cross,'--parallel',jobs])
         for name in ['geometry','hd-assets','display-filter']:
             run([cross/'spirv-cross',shaders/(name+'.spv'),'--msl','--msl-version','20100',*metal_binding_flags(name),'--rename-entry-point','main','fragmentMain','frag','--output',shaders/(name+'.msl')])
