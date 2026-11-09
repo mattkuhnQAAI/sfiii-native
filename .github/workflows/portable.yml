@@ -1,8 +1,6 @@
 name: Linux and Apple Silicon packages
 on:
   workflow_dispatch:
-  push:
-    branches: [main, codex/linux-macos]
 permissions:
   contents: read
 concurrency:
@@ -15,6 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: f9456e8bde3be3b74c655e872bdbc4a1c34d4b0f
       - name: Compile project-owned shaders
         shell: bash
         run: |
@@ -42,9 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-22.04
-            target: linux-x86_64
-          - runner: macos-15
+          - runner: macos-26
             target: darwin-aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 100
@@ -54,6 +51,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: f9456e8bde3be3b74c655e872bdbc4a1c34d4b0f
       - name: Verify native runner architecture
         shell: bash
         env:
