@@ -1,6 +1,6 @@
 # Linux and Apple Silicon macOS
 
-v0.9.0 supplies **Linux x86-64** and **Apple Silicon ARM64** packages alongside Windows. Intel Mac is excluded. Download the appropriate archive from [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0).
+v0.9.1 supplies **Linux x86-64** and **Apple Silicon ARM64** packages alongside Windows. Intel Mac is excluded. Download the appropriate archive from [v0.9.1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1).
 
 ## Player setup
 

@@ -2,7 +2,7 @@
 
 The 17 open contributions were reviewed against v0.9.0. Changes from twelve were adapted into the current source, one was superseded, and four proposals were deferred as written. Adaptation preserves current renderer, save-identity and packaging behavior rather than replacing the runtime patch with an older snapshot. Credit: [damiantw](https://github.com/damiantw).
 
-These are source updates after v0.9.0; existing published archives have not been replaced. New builds and new generated game programs are required to use them. Ordinary saves remain the cross-build progress path. Retain old applications/prepared builds for their native states and replay checkpoints.
+These changes ship in [v0.9.1](release-v0.9.1.md). New builds and new generated game programs are required to use them. Ordinary saves remain the cross-build progress path. Retain old applications/prepared builds for their native states and replay checkpoints.
 
 | PR | Disposition | Reason and retained work |
 | --- | --- | --- |

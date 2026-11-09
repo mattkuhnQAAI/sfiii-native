@@ -2,36 +2,34 @@
 
 **Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
 
-**Source updates after v0.9.0:** reviewed community fixes improve memory mirrors, non-local returns, save-file flushing, overlay snapshot dispatch, scene callback discovery and composition/lookup caching. Seven additional exact disc profiles are experimental registrations. See the [PR review and validation limits](docs/pr-review-2026-11.md). These source updates are not yet in the v0.9.0 downloads below.
+## Latest release improvements — v0.9.1
 
-## Latest release improvements — v0.9.0
+- **More reliable loading and transitions.** Improved Saturn memory mirroring, native returns across overlay calls, and discovery of scene callbacks. CD status replies include the full drive status.
+- **Safer saves and state restoration.** Backup memory is flushed before replacement. Native states preserve overlay headers when saved between a load and the first call into the overlay.
+- **Less work per frame.** The runtime caches overlay lookups and distributes background composition more evenly across CPU workers. A sound DSP fix also keeps reserved register writes from overwriting delay taps.
+- **Seven additional exact disc profiles.** Three Translation Project v25.1 revisions and four default V25+ add-on combinations are registered for experimental use.
+- **Updated Windows x64, Linux x86-64, and Apple Silicon builds.** Thanks to [damiantw](https://github.com/damiantw) for the community contributions.
 
-- **2160-line rendering and SSAA:** choose **1× / 2× / 5× / 9×** internal resolution, with optional **four-sample supersampling**. In a 240-line scene, 9× produces 2160 lines. Resolution and SSAA remain separate from window scaling and game speed.
-- **Five display filters:** **Nearest, Bilinear, Integer smooth, Bicubic and Lanczos**. Bicubic and Lanczos run on the GPU and support shrinking as well as enlargement. The toolbar cycles filters; the menu explains each choice.
-- **Reduced vertex and camera-depth stepping:** guarded vertex precision recovers fractional projected positions for reviewed Scenario 1–3 BOOT families. Higher-precision perspective division reduces another source of stepping as depth changes. Earlier camera-angle, object-transform and keyframe rounding remain unresolved.
-- **Sharper supported backgrounds:** enhanced sampling for eligible rotation floors, transparent-plane interiors and RGB888 sources, with ordinary floor blending and signed colour offsets. Native composition now implements extended colour calculation and line scroll/zoom used in captured game scenes. Complex background paths still retain native sampling or remain unresolved.
-- **Smoother audio:** presentation catches up on repeated VDP1 fields while retaining new world draws and every game/audio step. Device read-ahead no longer causes unnecessary playback restarts. Capture PNG encoding runs in a bounded background worker.
-- **Better display controls:** fullscreen in the menu, F11/Alt+Enter, saved VSync, and an Auto/Shown/Hidden toolbar with F10 access.
-- **Apple Silicon Mac package:** alongside Windows x64 and Linux x64. Intel Mac is excluded. Platform build and synthetic tests are separate from real-disc gameplay validation.
+The display options introduced in v0.9.0 remain available, including 9× rendering, four-sample supersampling, five scaling filters, vertex precision, and sharper supported backgrounds. **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
 
-See the [v0.9.0 release notes](docs/release-v0.9.0.md), [display controls](docs/USAGE.md#display) and [validation details](docs/DEVELOPMENT.md#presentation-performance-checks). **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
+See the [v0.9.1 release notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
 
 ## Downloads
 
-The latest release is [**v0.9.0**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
+The latest release is [**v0.9.1**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
 
 | Platform | Download | Validation scope |
 | --- | --- | --- |
-| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-win64.zip) | Local gameplay routes, GPU/display tests, audio-device checks and limited native-state continuations. |
-| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
-| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Native-0.9.0-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
+| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-win64.zip) | Fresh disc preparation, save import, and 16 gameplay routes across four editions, including native-state continuations. |
+| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
+| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
 | Optional Windows graphics builder | [Separate builder ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip) | Builds experimental artwork locally from your own discs. In-game artwork checks are strongest in Scenario 2; AI widescreen remains unsupported. |
 
 Checksums and platform validation summaries accompany the release. Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required by this runtime. Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
 ## Registered game editions
 
-Current source registers **13 exact-content profiles**. The v0.9.0 downloads contain the original six; the seven new contributor registrations require a subsequent application build. Disc identification was checked locally for the original six. A filename or translation-version label alone does not establish compatibility. Current Windows route checks cover four installed editions; new registrations are distinguished from locally tested discs.
+v0.9.1 registers **13 exact-content profiles**, including seven experimental registrations. Disc identification was checked locally for the original six, and current Windows gameplay routes cover four editions. A filename or translation-version label alone does not establish compatibility.
 
 | Game and registered edition | Current Windows evidence |
 | --- | --- |
@@ -41,10 +39,10 @@ Current source registers **13 exact-content profiles**. The v0.9.0 downloads con
 | Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. Current producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
 | Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight current routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
 | Scenario 3 — Translation Project v25.1 | Current title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
-| Scenario 2 — Translation Project v25.1 on V1.003 | New source-only exact profile from contributor PR #16. Contributor reports Linux audit/build/boot; this exact disc is unavailable in the maintainer suite. |
-| Scenario 2 — Translation Project v25.1 on V2.000 | New source-only exact profile from contributor PR #16, separate from the locally migrated image above. Local gameplay validation unavailable. |
-| Scenario 3 — Translation Project v25.1, Redump base | New source-only exact profile from contributor PR #16, separate from the previously supplied image. Local gameplay validation unavailable. |
-| V25.1 + V25+ default add-ons — Scenario 1 USA, Scenario 2 V1.003/V2.000, Scenario 3 Redump | Four new source-only exact profiles from contributor PR #19. Experimental; another add-on selection produces a different identity and remains unregistered. Maintainer disc/gameplay fixtures unavailable. |
+| Scenario 2 — Translation Project v25.1 on V1.003 | Experimental exact profile from contributor PR #16. Contributor reports Linux audit/build/boot; this exact disc is unavailable in the maintainer suite. |
+| Scenario 2 — Translation Project v25.1 on V2.000 | Experimental exact profile from contributor PR #16, separate from the locally migrated image above. Local gameplay validation unavailable. |
+| Scenario 3 — Translation Project v25.1, Redump base | Experimental exact profile from contributor PR #16, separate from the previously supplied image. Local gameplay validation unavailable. |
+| V25.1 + V25+ default add-ons — Scenario 1 USA, Scenario 2 V1.003/V2.000, Scenario 3 Redump | Four experimental exact profiles from contributor PR #19. Experimental; another add-on selection produces a different identity and remains unregistered. Maintainer disc/gameplay fixtures unavailable. |
 | Premium Disc / unregistered revisions | No profile. Deferred until separately identified and tested. |
 
 The launcher separates original USA Scenario 1, translated Scenario 1, translated Scenario 2 and translated Scenario 3, each with independent game-data paths. Unknown revisions produce a local `unregistered-disc.json` report without replacing progress or builds. Native compilation requires reviewed executable mappings for the exact image. Static compilation, emission, executed routes and hardware fidelity are separate claims.
