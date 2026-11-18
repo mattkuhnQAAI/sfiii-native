@@ -18,7 +18,7 @@
 
 The display options introduced in v0.9.0 remain available, including 9× rendering, four-sample supersampling, five scaling filters, vertex precision, and sharper supported backgrounds. **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
 
-See the [v0.9.1 release notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
+See the [v0.9.2 release notes](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2), [v0.9.1 notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
 
 ## Downloads
 
@@ -35,16 +35,16 @@ Checksums and platform validation summaries accompany the release. Builds contai
 
 ## Registered game editions
 
-v0.9.2 registers **14 exact-content profiles**, including eight experimental registrations. Disc identification was checked locally for the original six and the new Scenario 3 variant. A filename or translation-version label alone does not establish compatibility.
+v0.9.2 registers **14 exact-content profiles**, including eight experimental registrations. Disc identification was checked locally for the original six and the new Scenario 3 variant. The existing-edition route results below include v0.9.1 testing; only the new Scenario 3 variant was freshly prepared and replayed for v0.9.2. A filename or translation-version label alone does not establish compatibility.
 
-| Game and registered edition | Current Windows evidence |
+| Game and registered edition | Windows evidence |
 | --- | --- |
-| Scenario 1 — USA MK-81383 V1.001, unpatched | Current title and fresh-intro routes; older town/battle/transition checks. Full campaign unvalidated. |
-| Scenario 1 — Translation Project v25.1 | Current intro, original-save load and fresh-opening routes. Broader gameplay unvalidated. |
-| Scenario 2 — Translation Project v24 | Current isolated producer checks for its BOOT family. Towns, battles, items/spells and snapshots were exercised on earlier builds; no complete campaign claim. |
-| Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. Current producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
-| Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight current routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
-| Scenario 3 — Translation Project v25.1 | Current title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
+| Scenario 1 — USA MK-81383 V1.001, unpatched | v0.9.1 title and fresh-intro routes; older town/battle/transition checks. Full campaign unvalidated. |
+| Scenario 1 — Translation Project v25.1 | v0.9.1 intro, original-save load and fresh-opening routes. Broader gameplay unvalidated. |
+| Scenario 2 — Translation Project v24 | v0.9.1 isolated producer checks for its BOOT family. Towns, battles, items/spells and snapshots were exercised on earlier builds; no complete campaign claim. |
+| Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. v0.9.1 producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
+| Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight v0.9.1 routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
+| Scenario 3 — Translation Project v25.1 | v0.9.1 title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
 | Scenario 3 — Translation Project v25.1, newly patched source variant | Experimental exact profile. Locally compiled and reached a recorded harbor transition; battle and intro comparisons against the earlier image have differences requiring further investigation. Other patch selections may have different identities. |
 | Scenario 2 — Translation Project v25.1 on V1.003 | Experimental exact profile from contributor PR #16. Contributor reports Linux audit/build/boot; this exact disc is unavailable in the maintainer suite. |
 | Scenario 2 — Translation Project v25.1 on V2.000 | Experimental exact profile from contributor PR #16, separate from the locally migrated image above. Local gameplay validation unavailable. |
@@ -97,7 +97,9 @@ These older Windows captures illustrate actual native rendering and optional art
 
 ## Status and validation
 
-The Windows development candidate passed the six required runtime regressions and compiled-entry emission checks, plus **16 external gameplay routes** across the four locally installed editions. One Scenario 3 ship frame changed from corrected colour blending; it was reviewed while its video-memory/register dump remained identical. There are **213 GPU shader cases**, exercised locally on Vulkan and Direct3D 12, and scaler/UI/state checks. At 9× with SSAA and vertex precision, the recorded Scenario 2 route measured about **59.7–59.8 fields/sec** for Nearest, Bicubic and Lanczos, with zero measured audio shortages. This is one route on one PC, not a universal performance guarantee or proof that every sound path is exact.
+The v0.9.2 Windows candidate passed the six required runtime regressions and compiled-entry emission checks. A fresh packaged preparation of the new Scenario 3 image passed recorded title and harbor routes. An expanded comparison against the earlier Scenario 3 image reached the tested routes, but several battle and intro frame or video-memory comparisons differed and are not counted as passing comparisons. The GPU regression suite passed **223 shader cases** locally on Vulkan.
+
+Earlier v0.9.1 validation covered 16 external gameplay routes across four locally installed editions. Its Scenario 2 performance test measured about **59.7–59.8 fields/sec** at 9× with SSAA and vertex precision on one recorded route, with no measured audio shortages. Those earlier results are not a universal performance guarantee or validation of the full game or every sound path.
 
 Source tests, static module findings, native-state coverage and hardware-model fidelity remain separate. Unvisited indirect targets, scenes, spells and transitions remain unvalidated. Linux and Apple Silicon packages receive native compilation, invented-data CPU/storage/CHD/UI/state tests and shader tests when a usable runner GPU is available. Missing GPU/physical-device/game fixtures are reported as unavailable, not passing gameplay validation. No game data is uploaded to CI.
 
