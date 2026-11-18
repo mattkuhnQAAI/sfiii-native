@@ -76,6 +76,8 @@ This is a short **screen-space ray** effect in the GPU shader, using visible geo
 
 ## Game saves
 
+Choose a separate **Game and saves** folder for each scenario in the launcher. This folder contains prepared game files, ordinary saves, and the `native-states` folder for quick states. Use **Open save folder** to find it. Choosing another folder does not move your existing progress; select the original folder again or copy your backups while the game is closed. Back up the folder to another location or drive.
+
 Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
 
 **Import Saturn Saves.cmd** accepts per-save raw `SFORCE31_XX.BIN` (12904 bytes), `SFORCE32_XX.BIN` (16248 bytes), and version-1 JSON `.ysbak` exports with matching filename, size and checksum. Development builds also accept `SFORCE33_XX.BIN` (24344 bytes) and matching YSBAK exports. Scenario 2 gameplay requires the experimental translated-v24 profile; Scenario 3 development uses the registered Translation Project v25.1 disc. Accepting a save format does not validate every scene it can load. The published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 packages predate Scenario 3 support.

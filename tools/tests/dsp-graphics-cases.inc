@@ -6,7 +6,7 @@ static int64_t reference_product(int32_t x,int32_t y) {
 }
 
 static void multiplier_path_cases() {
-    const int32_t values[]={INT32_MIN,-65537,-1,0,1,65537,INT32_MAX};
+    const int32_t values[]={INT32_MIN,INT32_MIN+1,-65537,-32768,-1,0,1,32767,65537,INT32_MAX-1,INT32_MAX};
     unsigned cases=0;
     // Exercise instruction decoding and sequencing, not direct register setters.
     for(int bank=0;bank<4;++bank) for(bool increment : {false,true})

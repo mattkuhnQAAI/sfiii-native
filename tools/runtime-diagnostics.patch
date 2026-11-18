@@ -3003,7 +3003,7 @@ index b9595ef..1c07383 100644
 +    if(!write_png_file(path,fr))sat_note("cannot write %s",path.c_str());
  }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..99fbb03 100644
+index 8589d33..620207c 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -33,11 +33,17 @@
@@ -3102,17 +3102,20 @@ index 8589d33..99fbb03 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +197,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -136,12 +197,71 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
  
 +static void hd_quad(const Cmd& c,Pt a,Pt b,Pt cc,Pt d) {
 +    g_hd_current=0;
-+    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || c.cmode!=5
++    // Record indexed distorted sprites for the optional wide-side renderer.
++    // Native framebuffer pixels remain authoritative for these commands.
++    const bool indexed=c.cmode==4 && (c.ctrl&15)==2 && c.ecd && !c.spd && !c.gouraud;
++    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || (c.cmode!=5 && !indexed)
 +       || (c.ccb&3) || c.mesh || c.mon || g_fb8 || g_hi_target || (g_reg[TVMR]&2)) return;
 +    auto& scene=g_hd_scene[g_draw_fb];
 +    if(scene.quads.size()>=65534) return;
-+    uint64_t key=c.srca | (uint64_t(c.w)<<20) | (uint64_t(c.h)<<30)
++    uint64_t key=c.srca | (uint64_t(indexed)<<19) | (uint64_t(c.w)<<20) | (uint64_t(c.h)<<30)
 +                 | (uint64_t(c.colr)<<40) | (uint64_t(c.pmod&0xC0)<<56);
 +    auto& texture=g_hd_textures[key];
 +    if(!texture) {
@@ -3121,7 +3124,7 @@ index 8589d33..99fbb03 100644
 +        for(int y=0;y<c.h;++y) for(int x=0;x<c.w;++x) {
 +            uint16_t p;bool end;
 +            bool shown=texel(tc,x,y,p,end);
-+            texture->raw[y*c.w+x]=tw(c.srca+2*(y*c.w+x));
++            texture->raw[y*c.w+x]=indexed ? (shown?p:0) : tw(c.srca+2*(y*c.w+x));
 +            texture->rgba[y*c.w+x]=((p&31)<<19)|(((p>>5)&31)<<11)|(((p>>10)&31)<<3)|(shown?0xFF000000u:0);
 +        }
 +        hd_fingerprint(texture->fingerprint,uint64_t(c.w)<<32|unsigned(c.h));
@@ -3130,14 +3133,14 @@ index 8589d33..99fbb03 100644
 +    HdQuad q;float xy[]={float(a.x),float(a.y),float(b.x),float(b.y),float(cc.x),float(cc.y),float(d.x),float(d.y)};
 +    std::copy(xy,xy+8,q.xy);q.hflip=c.hflip;q.vflip=c.vflip;q.texture=texture;
 +    q.clip[0]=g_sys_x;q.clip[1]=g_sys_y;q.clip[2]=g_ux0;q.clip[3]=g_uy0;q.clip[4]=g_ux1;q.clip[5]=g_uy1;
-+    q.gpu_flags=c.pmod|((c.ctrl&15)<<16);q.gpu_eligible=true;
-+    for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
++    q.gpu_flags=c.pmod|((c.ctrl&15)<<16)|(indexed?0x1000000u:0);q.gpu_eligible=!indexed;
++    if(!indexed)for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
 +    if((c.ctrl&15)>=2) {
 +        const Pt corners[]={a,b,cc,d};int sign=0;
 +        for(int i=0;i<4;++i) {
 +            const auto p=corners[i],n=corners[(i+1)%4],nn=corners[(i+2)%4];
 +            const int cross=(n.x-p.x)*(nn.y-n.y)-(n.y-p.y)*(nn.x-n.x);
-+            if(!cross || (sign && ((cross<0)!=(sign<0)))) q.gpu_eligible=false;
++            if(!cross || (sign && ((cross<0)!=(sign<0)))) {q.gpu_eligible=false;q.gpu_flags&=~0x1000000u;}
 +            if(cross) sign=cross;
 +        }
 +    }
@@ -3171,7 +3174,7 @@ index 8589d33..99fbb03 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +273,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +276,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -3190,7 +3193,7 @@ index 8589d33..99fbb03 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -211,6 +332,8 @@ static uint64_t g_draw_steps;
+@@ -211,6 +335,8 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -3199,7 +3202,7 @@ index 8589d33..99fbb03 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +379,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +382,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -3212,7 +3215,7 @@ index 8589d33..99fbb03 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +418,27 @@ struct RecFrame {
+@@ -289,6 +421,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -3240,7 +3243,7 @@ index 8589d33..99fbb03 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +462,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +465,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -3255,7 +3258,7 @@ index 8589d33..99fbb03 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +478,12 @@ static void draw() {
+@@ -320,6 +481,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -3268,7 +3271,7 @@ index 8589d33..99fbb03 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +770,11 @@ static void erase(int which) {
+@@ -606,7 +773,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -3281,7 +3284,7 @@ index 8589d33..99fbb03 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +844,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +847,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -3311,7 +3314,7 @@ index 8589d33..99fbb03 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +885,42 @@ void vdp1_state(State& s) {
+@@ -707,4 +888,42 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -3344,7 +3347,7 @@ index 8589d33..99fbb03 100644
 +                q.texture=index==~0u?nullptr:textures[index];
 +            }
 +        }
-+        if(s.loading) {scene.visible.clear();scene.effects.clear();scene.composition.clear();}
++        if(s.loading) {scene.visible.clear();scene.effects.clear();scene.composition.clear();scene.palette_composition.clear();}
 +    }
 +    if(s.loading) {
 +        ++g_presentation_epoch;g_hd_textures.clear();
@@ -3416,7 +3419,7 @@ index 15c677f..55ec3b7 100644
          Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
          int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..787a558 100644
+index 4c8bcb1..584afee 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -3910,18 +3913,36 @@ index 4c8bcb1..787a558 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +772,47 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +772,65 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
 +    const bool gpu=vdp1_gpu_active() && f.hd && !dd && !(vdp1_reg_read(0,2)&3) && (reg(0xE0)&0x20) && grad<0;
 +    if(gpu)f.rotation=rotation_presentation(rbg,f.h);
++    Pix indexed_sprite{};bool indexed_available=false;
++    if(gpu && expand && color_mode<2) for(auto& q:f.hd->quads) {
++        if(!(q.gpu_flags&0x1000000u) || !q.texture)continue;
++        float xmin=q.xy[0],xmax=xmin;
++        for(int i=1;i<4;++i){xmin=std::min(xmin,q.xy[i*2]);xmax=std::max(xmax,q.xy[i*2]);}
++        if(xmin>=0 && xmax<f.native_w)continue;
++        auto converted=std::make_shared<HdTexture>(*q.texture);bool valid=true,have=false;Pix attributes{};
++        for(auto& value:converted->raw) {
++            if(!value)continue;
++            Pix p{};if(sprite_pixel(value,p)!=S_DOT || p.direct || p.shade) {valid=false;break;}
++            if(!have){attributes=p;have=true;}
++            if(p.prio!=attributes.prio || p.ratio!=attributes.ratio || p.cc!=attributes.cc || p.offset!=attributes.offset || p.offset_b!=attributes.offset_b) {valid=false;break;}
++            value=uint16_t(0x8000 | ((p.rgb>>19)&31) | ((p.rgb>>6)&0x3e0) | ((p.rgb<<7)&0x7c00));
++        }
++        if(!valid || !have)continue;
++        if(indexed_available && (indexed_sprite.prio!=attributes.prio || indexed_sprite.ratio!=attributes.ratio || indexed_sprite.cc!=attributes.cc || indexed_sprite.offset!=attributes.offset || indexed_sprite.offset_b!=attributes.offset_b))continue;
++        indexed_sprite=attributes;indexed_available=true;q.texture=converted;q.gpu_eligible=true;
++    }
 +    if(expand) {
 +        unsigned world=0;if(f.hd)for(const auto& q:f.hd->quads)world+=q.gpu_eligible && ((q.gpu_flags>>16)&15)==2;
 +        // Keep movies, flat screens and unsupported video modes at original framing.
 +        if(!gpu || scale!=1 || !rbg.on || world<3) {f=Frame{};return;}
 +    }
-+    if(gpu) f.hd->composition.resize(f.w*f.h);
++    if(gpu) {f.hd->composition.resize(f.w*f.h);if(indexed_available)f.hd->palette_composition.resize(f.w*f.h);}
 +    const bool reuse=expand && current && current!=&f && current->origin_x==0 && current->w==f.native_w && current->h==f.h
 +        && current->px.size()==size_t(current->w)*current->h && current->hd
 +        && current->hd->composition.size()==current->px.size() && current->hd->visible.size()==current->px.size()
@@ -3959,7 +3980,7 @@ index 4c8bcb1..787a558 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,39 +820,64 @@ void vdp2_compose(Frame& f) {
+@@ -439,40 +838,75 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -4032,11 +4053,23 @@ index 4c8bcb1..787a558 100644
                  Pix& p = l[L_NBG0 + n];
                  p = {};
 -                const Nbg& s = nbg[n];
+-                if (!s.on || !s.prio || windowed(wctl[L_NBG0 + n], win, x)) continue;
 +                const Nbg& s = line_nbg[n];
-                 if (!s.on || !s.prio || windowed(wctl[L_NBG0 + n], win, x)) continue;
++                if (!s.on || !s.prio) continue;
++                Win background_win[2] = {win[0], win[1]};
++                if(expand && s.bitmap && (s.cc || (s.opaque && !rbg.cc))) for(int i=0;i<2;++i) {
++                    // Full-viewport bitmaps can provide haze or the backdrop in
++                    // battle. Retain partial windows, Y bounds and effect layers.
++                    if((wctl[L_NBG0+n]>>(i*2)&3)==3 && background_win[i].xs==0 && background_win[i].xe==f.native_w-1) {
++                        background_win[i].xs=-f.origin_x;
++                        background_win[i].xe=f.w-f.origin_x-1;
++                    }
++                }
++                if (windowed(wctl[L_NBG0 + n], background_win, x)) continue;
                  if (!nbg_pixel(s, x, y, p)) continue;
                  p.prio = s.prio;
-@@ -485,10 +891,17 @@ void vdp2_compose(Frame& f) {
+                 if ((sfprmd >> (n * 2) & 3) == 1) p.prio = (uint8_t)((s.prio & 6) | p.spr);
+@@ -485,10 +919,17 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -4056,7 +4089,7 @@ index 4c8bcb1..787a558 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +917,161 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +945,174 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -4069,11 +4102,11 @@ index 4c8bcb1..787a558 100644
 +                auto& e=f.hd->composition[size_t(y)*f.w+output_x];
 +                e.owner=expand && (x<0 || x>=f.native_w) ? 0:vdp1_hd_owner(x,y,dd);
 +                const uint16_t raw=expand && (x<0 || x>=f.native_w) ? 0:sprite_dot(x,y,dd);
-+                const bool supported=e.owner && e.owner<=f.hd->quads.size() && f.hd->quads[e.owner-1].gpu_eligible;
++                const bool supported=e.owner && e.owner<=f.hd->quads.size() && f.hd->quads[e.owner-1].gpu_eligible && !(f.hd->quads[e.owner-1].gpu_flags&0x1000000u);
 +                if(raw && !supported) e.mode=0x100; // Retain native unsupported effects/UI.
 +                else {
-+                    auto evaluate=[&](bool present,GpuPixel* parameters) {
-+                        Pix sp{};sprite_pixel(0x8000,sp);
++                    auto evaluate=[&](bool present,GpuPixel* parameters,const Pix* indexed=nullptr) {
++                        Pix sp{};if(indexed)sp=*indexed;else sprite_pixel(0x8000,sp);
 +                        int a=-1,b=-1,c=-1;
 +                        auto take=[&](int i) {if(!l[i].prio)return;if(a<0 || l[i].prio>l[a].prio){c=b;b=a;a=i;}else if(b<0 || l[i].prio>l[b].prio){c=b;b=i;}else if(c<0 || l[i].prio>l[c].prio)c=i;};
 +                        const Pix saved=l[L_SPRITE];l[L_SPRITE]=sp;
@@ -4104,7 +4137,16 @@ index 4c8bcb1..787a558 100644
 +                            }
 +                            // Nested colour operations with the variable sprite
 +                            // below another screen retain native coverage.
-+                            if(extended && a!=L_SPRITE && (b==L_SPRITE || c==L_SPRITE))parameters->mode=0x100;
++                            if(extended && a!=L_SPRITE && (b==L_SPRITE || c==L_SPRITE)) {
++                                // An expanded side pixel has no native sprite. Support the
++                                // common bitmap-over-sprite case without dropping geometry.
++                                if(expand && (x<0 || x>=f.native_w) && !f.rotation && b==L_SPRITE &&
++                                   c>=0 && !line && calculation && !add && !second_ratio) {
++                                    if(sp.cc && (color_mode==0 || l[c].direct)) {
++                                        parameters->mode=6;parameters->rotation_second=l[c].rgb;
++                                    } else parameters->mode=4;
++                                } else parameters->mode=0x100;
++                            }
 +                        }
 +                        l[L_SPRITE]=saved;return value;
 +                    };
@@ -4129,6 +4171,10 @@ index 4c8bcb1..787a558 100644
 +                        }
 +                    }
 +                    if(extended && raw && top!=L_SPRITE)e.mode=0x100;
++                    if(indexed_available && (x<0 || x>=f.native_w)) {
++                        auto& pe=f.hd->palette_composition[size_t(y)*f.w+output_x];
++                        pe.absent=rgb;evaluate(true,&pe,&indexed_sprite);
++                    }
 +                }
 +            }
 +            if(gpu && f.rotation) {
@@ -4288,7 +4334,7 @@ index 88d1642..617ad4d 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..e2d3647 100644
+index ebaa466..f098b64 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -4331,7 +4377,7 @@ index ebaa466..e2d3647 100644
 +struct HdEffect { uint32_t second=0; int16_t offset[3]{}; uint8_t ratio=0,flags=0; };
 +inline void hd_fingerprint(uint64_t& state,uint64_t value) {state^=value+0x9E3779B97F4A7C15ull+(state<<6)+(state>>2);}
 +struct HdScene { uint64_t serial=0,fingerprint=0,geometry=0; std::vector<HdQuad> quads; std::vector<uint16_t> visible; std::vector<HdEffect> effects;
-+    std::vector<GpuPixel> composition; };
++    std::vector<GpuPixel> composition,palette_composition; };
 +void vdp1_hd_collect(bool enabled);
 +std::shared_ptr<HdScene> vdp1_hd_scene();
 +uint16_t vdp1_hd_owner(int x,int y,bool dd);

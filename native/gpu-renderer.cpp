@@ -173,6 +173,18 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         data[bin_at+2*i]=uint32_t(data.size());data[bin_at+2*i+1]=uint32_t(bins[i].size());
         data.insert(data.end(),bins[i].begin(),bins[i].end());
     }
+    if(f.hd && f.origin_x && f.hd->palette_composition.size()==f.px.size()) {
+        const uint32_t base=uint32_t(data.size());data.resize(data.size()+size_t(pixels)*12);
+        for(uint32_t i=0;i<pixels;++i) {
+            const auto& e=f.hd->palette_composition[i];const auto at=base+i*12;
+            data[at]=f.px[i];data[at+1]=e.absent;data[at+2]=e.constant;data[at+3]=e.mode;data[at+4]=e.ratio;
+            for(int c=0;c<3;++c)data[at+5+c]=uint32_t(e.offset[c]);
+            data[at+8]=e.owner;data[at+9]=e.rotation;data[at+10]=e.rotation_second;data[at+11]=e.rotation_effect;
+        }
+        for(uint32_t i=0;i<count;++i)if(f.hd->quads[i].gpu_flags&0x1000000u) {
+            data[quad_at+i*40+34]=base;data[quad_at+i*40+35]=f.native_w;
+        }
+    }
     if(f.rotation && scale>1 && f.rotation->rows.size()==size_t(f.h+1)*4 &&
        f.rotation->vram.size()==0x20000 && f.rotation->palette.size()==2048) {
         const auto& r=*f.rotation;const uint32_t base=uint32_t(data.size());data[11]=base;

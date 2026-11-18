@@ -261,6 +261,38 @@ void sprite_fixture(unsigned flip,int x,int y,int local_x,int local_y,int max_x=
 }
 }
 
+TEST(palette_sprite_uses_its_own_colour_calculation_ratio) {
+    clear_sprite_fixture();
+    rotation_bitmap();
+    // A type-4 indexed dot selects priority register 2 and ratio register 2;
+    // an RGB dot selects register 0 for both. They cannot share blend metadata.
+    reg16(0xE0,0x2024);reg16(0xEC,0x0040);
+    reg16(0xF0,0x0402);reg16(0xF2,0x0202);
+    reg16(0x100,0x1800);reg16(0x102,0x0016);
+    mem_wr(g_vdp2_cram,0x397*2,0x001F,2);
+    vdp1_fb_write(0,0x4B97,2);vdp1_fb_write(2,0x801F,2);vdp1_vblank_out();
+    Frame f;vdp2_compose(f);
+    CHECK_EQ(f.px[0],0x45B200u);
+    CHECK_EQ(f.px[1],0xF00700u);
+    clear_sprite_fixture();
+}
+
+TEST(indexed_widescreen_geometry_records_palette_indices_and_transparency) {
+    clear_sprite_fixture();vdp1_gpu_available(true);vdp1_render_scale(2);vdp1_hd_collect(true);
+    auto cmd=[](unsigned a,unsigned o,uint16_t v){mem_wr(g_vdp1_vram,a+o,v,2);};
+    cmd(0,0,9);cmd(0,20,319);cmd(0,22,223);
+    cmd(32,0,2);cmd(32,4,0xA0);cmd(32,6,0x4B00);cmd(32,8,0x200);cmd(32,10,0x0101);
+    cmd(32,12,uint16_t(-2));cmd(32,14,0);cmd(32,16,5);cmd(32,18,0);
+    cmd(32,20,5);cmd(32,22,5);cmd(32,24,uint16_t(-2));cmd(32,26,5);
+    cmd(64,0,0x8000);
+    for(unsigned i=0;i<8;++i)g_vdp1_vram[0x1000+i]=i==0?0:uint8_t(i);
+    vdp1_reg_write(4,1,2);vdp1_vblank_out();
+    auto scene=vdp1_hd_scene();CHECK_EQ(bool(scene),true);CHECK_EQ(scene->quads.size(),size_t(1));
+    const auto& q=scene->quads[0];CHECK_EQ(bool(q.gpu_flags&0x1000000u),true);
+    CHECK_EQ(q.gpu_eligible,false);CHECK_EQ(q.texture->raw[0],0);CHECK_EQ(q.texture->raw[1],0x4B01);
+    vdp1_gpu_available(false);vdp1_render_scale(1);clear_sprite_fixture();
+}
+
 TEST(normal_sprite_flips_local_coordinates_and_transparency_agree) {
     for(unsigned flip=0;flip<4;++flip) {
         sprite_fixture(flip,10,10,5,7);
@@ -398,6 +430,68 @@ TEST(widescreen_rotation_floor_extends_viewport_windows_but_preserves_masks_and_
         reg16(0xD4,2<<(window*2));CHECK_EQ(vdp2_compose_wide(wide),true);
         CHECK_EQ(at(0,100),0x00F800);CHECK_EQ(at(wide.w-1,100),0x00F800);
     }
+    vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
+}
+
+TEST(widescreen_colour_bitmap_extends_full_viewport_and_preserves_partial_masks) {
+    vdp1_init();vdp1_gpu_available(true);vdp1_render_scale(2);vdp1_hd_collect(true);
+    std::memset(g_vdp1_vram,0,sizeof g_vdp1_vram);
+    auto cmd=[](unsigned a,unsigned o,uint16_t v){mem_wr(g_vdp1_vram,a+o,v,2);};
+    cmd(0,0,9);cmd(0,20,319);cmd(0,22,239);cmd(32,0,10);
+    for(int i=0;i<8;++i)cmd(0x200,i*2,0x83E0);
+    for(int i=0;i<3;++i) {
+        unsigned at=64+i*32;cmd(at,0,2);cmd(at,4,0xA8);cmd(at,8,0x40);cmd(at,10,0x101);
+        const int xy[]={10,10+i*4,18,10+i*4,18,12+i*4,10,12+i*4};
+        for(int j=0;j<8;++j)cmd(at,12+j*2,xy[j]);
+    }
+    cmd(160,0,0x8000);vdp1_reg_write(4,1,2);vdp1_vblank_out();
+    rotation_bitmap();reg16(0x20,0x11);reg16(0x28,0x12);reg16(0x3C,3);
+    std::memset(g_vdp2_vram+0x60000,1,0x20000);
+    mem_wr(g_vdp2_cram,2,0x001F,2);
+    reg16(0x78,1);reg16(0x7C,1);reg16(0xF8,3);reg16(0xE0,0x20);
+    reg16(0xEC,1);reg16(0x108,15);
+    reg16(0xC8,0);reg16(0xCA,8);reg16(0xCC,638);reg16(0xCE,215);reg16(0xD0,0x0C);
+    Frame native,wide;vdp2_compose(native);CHECK_EQ(vdp2_compose_wide(wide,&native),true);
+    auto at=[&](int x,int y){return wide.px[y*wide.w+x];};
+    CHECK_EQ(at(0,100),native.px[100*native.w]);
+    CHECK_EQ(at(wide.w-1,100),native.px[100*native.w+native.w-1]);
+    CHECK_EQ(at(0,7),native.px[7*native.w]);
+    for(int y=0;y<native.h;++y)for(int x=0;x<native.w;++x)
+        CHECK_EQ(at(x+wide.origin_x,y),native.px[y*native.w+x]);
+    reg16(0xCC,630);CHECK_EQ(vdp2_compose_wide(wide),true);
+    CHECK_EQ(at(0,100),0x00F800u);CHECK_EQ(at(wide.w-1,100),0x00F800u);
+    reg16(0xCC,638);reg16(0xDC,0x8001);reg16(0xDE,0x8000);
+    for(int y=0;y<224;++y) {
+        mem_wr(g_vdp2_vram,0x30000+y*4,0,2);
+        mem_wr(g_vdp2_vram,0x30002+y*4,638,2);
+    }
+    CHECK_EQ(vdp2_compose_wide(wide),true);CHECK_EQ(at(0,100),native.px[100*native.w]);
+    mem_wr(g_vdp2_vram,0x30002+100*4,630,2);
+    CHECK_EQ(vdp2_compose_wide(wide),true);CHECK_EQ(at(0,100),0x00F800u);
+    reg16(0xDC,0);
+    reg16(0xCC,638);reg16(0xEC,0);CHECK_EQ(vdp2_compose_wide(wide),true);
+    CHECK_EQ(at(0,100),0x00F800u);CHECK_EQ(at(wide.w-1,100),0x00F800u);
+    // Opaque battle backdrops extend too, except during rotation-plane
+    // colour effects where unrelated backdrop pixels may leak through.
+    reg16(0x20,0x111);CHECK_EQ(vdp2_compose_wide(wide),true);
+    CHECK_EQ(at(0,100),0xF80000u);CHECK_EQ(at(wide.w-1,100),0xF80000u);
+    reg16(0xEC,0x10);reg16(0xCC,630);vdp2_compose(native);
+    const auto effect_background=native.px[100*native.w+native.w-1];
+    reg16(0xCC,638);CHECK_EQ(vdp2_compose_wide(wide),true);
+    CHECK_EQ(at(0,100),effect_background);CHECK_EQ(at(wide.w-1,100),effect_background);
+    reg16(0x20,0x11);
+    // Extended calculation blends bitmap, sprite, then the background.
+    // The centre retains the conservative native path while outer geometry
+    // carries enough metadata for the GPU to reproduce both blend stages.
+    reg16(0xEC,0x441);reg16(0xE0,0x220);reg16(0xF0,2);
+    vdp2_compose(native);CHECK_EQ(vdp2_compose_wide(wide,&native),true);
+    CHECK_EQ(wide.hd->composition[100*wide.w].mode,6u);
+    CHECK_EQ(wide.hd->composition[100*wide.w].rotation_second,0x00F800u);
+    for(int y=0;y<native.h;++y)for(int x=0;x<native.w;++x)
+        CHECK_EQ(at(x+wide.origin_x,y),native.px[y*native.w+x]);
+    // When sprite colour calculation is disabled, only the top blend applies.
+    reg16(0xEC,0x401);CHECK_EQ(vdp2_compose_wide(wide),true);
+    CHECK_EQ(wide.hd->composition[100*wide.w].mode,4u);
     vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
 }
 

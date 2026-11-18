@@ -36,7 +36,7 @@ class Launcher:
         if self.config.is_file():
             self.preferences.update(json.loads(self.config.read_text()))
         root.title('Shining Force III Native')
-        root.geometry('850x490')
+        root.geometry('850x530')
         root.minsize(740,450)
         frame = ttk.Frame(root,padding=20)
         frame.pack(fill='both',expand=True)
@@ -47,15 +47,16 @@ class Launcher:
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
         self.entries=[]
-        for row,title,var,browse in [(2,'Disc (CUE / CHD)',self.cue,self.browse_disc),(3,'Game-data folder',self.work,self.browse_work)]:
+        for row,title,var,browse in [(2,'Disc (CUE / CHD)',self.cue,self.browse_disc),(3,'Game and saves',self.work,self.browse_work)]:
             ttk.Label(frame,text=title).grid(row=row,column=0,sticky='w',padx=(0,12))
             entry=ttk.Entry(frame,textvariable=var)
             entry.grid(row=row,column=1,sticky='ew',pady=5)
             button=ttk.Button(frame,text='Browse',command=browse)
             button.grid(row=row,column=2,padx=(10,0))
             self.entries.extend([entry,button])
+        ttk.Label(frame,text='Saves and quick states are stored in this folder. Changing folders does not move them.',wraplength=780).grid(row=4,column=0,columnspan=3,sticky='w',pady=(2,0))
         bar=ttk.Frame(frame)
-        bar.grid(row=4,column=0,columnspan=3,sticky='w',pady=15)
+        bar.grid(row=5,column=0,columnspan=3,sticky='w',pady=15)
         self.prepare=ttk.Button(bar,text='Prepare game',command=self.prepare_game)
         self.play=ttk.Button(bar,text='Play',command=self.play_game)
         self.controller=ttk.Button(bar,text='Controller setup',command=lambda:self.controller_tool('--setup'))
@@ -64,16 +65,18 @@ class Launcher:
         self.cancel=ttk.Button(bar,text='Cancel setup',command=self.cancel_setup)
         for button in [self.prepare,self.play,self.controller,self.test,self.import_button,self.cancel]:button.pack(side='left',padx=(0,7))
         artwork=ttk.Frame(frame)
-        artwork.grid(row=5,column=0,columnspan=3,sticky='w')
+        artwork.grid(row=6,column=0,columnspan=3,sticky='w')
         self.artwork=ttk.Button(artwork,text='Attach optional graphics',command=self.attach_artwork)
         self.artwork.pack(side='left',padx=(0,7))
         self.original_art=ttk.Button(artwork,text='Use original graphics',command=self.detach_artwork)
-        self.original_art.pack(side='left')
+        self.original_art.pack(side='left',padx=(0,7))
+        self.open_saves=ttk.Button(artwork,text='Open save folder',command=self.open_save_folder)
+        self.open_saves.pack(side='left')
         self.state=tk.StringVar(value='Choose your supported disc, then prepare the game.')
-        ttk.Label(frame,textvariable=self.state,wraplength=780).grid(row=6,column=0,columnspan=3,sticky='w',pady=5)
+        ttk.Label(frame,textvariable=self.state,wraplength=780).grid(row=7,column=0,columnspan=3,sticky='w',pady=5)
         self.progress=ttk.Progressbar(frame,mode='indeterminate')
-        self.progress.grid(row=7,column=0,columnspan=3,sticky='ew',pady=10)
-        ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=8,column=0,columnspan=3,sticky='w')
+        self.progress.grid(row=8,column=0,columnspan=3,sticky='ew',pady=10)
+        ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=9,column=0,columnspan=3,sticky='w')
         self.active=max(0,min(len(SCENARIOS)-1,int(self.preferences.get('selected',0))))
         self.selection.current(DISPLAY_GAMES.index(self.active))
         self.restore()
@@ -127,10 +130,20 @@ class Launcher:
         self.refresh()
 
     def browse_work(self):
-        path=filedialog.askdirectory()
+        path=filedialog.askdirectory(title='Choose the folder for this game and its saves')
         if path:self.work.set(path)
         self.remember()
         self.refresh()
+
+    def open_save_folder(self):
+        path=Path(self.work.get()).expanduser()
+        if not self.work.get().strip() or not path.is_dir():
+            messagebox.showinfo('Save folder','This folder does not exist yet. It will be created when you prepare the game.',parent=self.root)
+            return
+        try:
+            subprocess.Popen(['open' if sys.platform=='darwin' else 'xdg-open',str(path.resolve())],start_new_session=True)
+        except OSError as error:
+            messagebox.showerror('Could not open save folder',str(error),parent=self.root)
 
     def start(self,args,task,env=None):
         self.remember()

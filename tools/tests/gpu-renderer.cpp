@@ -35,6 +35,19 @@ int main(int argc,char** argv) {
         std::printf("GPU %s: %s\n",gpu.backend(),gpu.adapter());
         unsigned cases=0;
         {
+            auto f=fixture(8,4);f.origin_x=2;f.native_w=4;
+            auto q=quad({0x801F},1,1,-2,0,5,3);q.gpu_flags|=(2u<<16)|0x1000000u;
+            f.hd->quads.push_back(q);f.hd->palette_composition.resize(f.px.size());
+            for(auto& p:f.hd->palette_composition){p.mode=2;p.ratio=16;p.constant=0x00FF00;p.absent=0x112233;}
+            for(int y=0;y<4;++y)for(int x=2;x<6;++x)f.hd->composition[y*8+x].mode=0x100;
+            auto out=rendered(gpu,f,2);
+            check(out.px[2*16+1]==0x748700,"Indexed side geometry must use its own blend ratio and palette range");
+            check(out.px[2*16+5]==0x112233,"Indexed geometry must preserve native pixels");
+            auto front=quad({0x83E0},1,1,-2,0,5,3);front.gpu_flags|=2u<<16;f.hd->quads.push_back(front);
+            out=rendered(gpu,f,2);check(out.px[2*16+1]==0x00FF00,"Later RGB geometry must retain its own composition");
+            ++cases;
+        }
+        {
             auto f=fixture();auto q=quad({0xFFFF},1,1,0,0,3,3);
             q.xy[2]=3;q.xy[3]=1;q.xy[4]=2;q.xy[5]=3;q.xy[6]=0;q.xy[7]=2;
             f.hd->quads.push_back(q);const auto native=f.px;
@@ -91,6 +104,19 @@ int main(int argc,char** argv) {
                     expected|=unsigned(std::clamp(int(v)+offset[c],0,255))<<sh;}
             }
             for(auto p:out.px)check(p==expected,"VDP2 ratio/addition/offset ordering");++cases;
+        }
+        // A translucent bitmap over the sprite and another background uses
+        // VDP2 extended colour quantization before the ordinary blend.
+        for(unsigned ratio:{0u,15u,31u})for(uint16_t raw:{uint16_t(0x801F),uint16_t(0xC210),uint16_t(0xFFFF)}) {
+            auto f=fixture();f.hd->quads.push_back(quad({raw},1,1,0,0,3,3));
+            for(auto& p:f.hd->composition){p.mode=6;p.ratio=ratio;p.constant=0x41A1D3;p.rotation_second=0x27394B;p.offset[0]=-7;p.offset[1]=3;p.offset[2]=17;}
+            uint32_t expected=0,source=rgb555(raw);const int offset[]={-7,3,17};
+            for(int c=0;c<3;++c) {
+                int sh=16-c*8;unsigned sprite=(source>>sh)&255,top=(0x41A1D3>>sh)&255,below=(0x27394B>>sh)&255;
+                unsigned mixed=((sprite>>2)+(below>>2))*2;
+                expected|=unsigned(std::clamp(int((top*(31-ratio)+mixed*(ratio+1))>>5)+offset[c],0,255))<<sh;
+            }
+            auto out=rendered(gpu,f,2);for(auto pixel:out.px)check(pixel==expected,"Extended bitmap-over-sprite blending");++cases;
         }
         for(int scale:{2,4,5}) {
             auto f=fixture(8,2);auto q=quad({0x801F,0x7FFF,0x83E0,0x7FFF,0xFC00,0xFC00,0xFC00,0xFC00},8,1,0,0,7,0);q.gpu_flags=0;f.hd->quads.push_back(q);

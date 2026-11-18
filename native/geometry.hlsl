@@ -10,6 +10,7 @@ struct Input {float4 color:TEXCOORD0;float2 uv:TEXCOORD1;float4 position:SV_Posi
 float2 vertex_at(uint q,uint at){return asfloat(uint2(S(q+at),S(q+at+1)));}
 bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
     color=0;uint flags=S(q+25);if(flags==0xFFFFFFFF)return false;
+    if((flags&0x1000000) && (S(q+34)==0 || (cell.x>=0 && cell.x<int(S(q+35)))))return false;
     if(cell.x<int(S(q+32)) || cell.y<0 || cell.x>int(S(q+26)) || cell.y>int(S(q+27)))return false;
     if(flags&0x400) {
         bool inside=cell.x>=int(S(q+28)) && cell.y>=int(S(q+29)) && cell.x<=int(S(q+30)) && cell.y<=int(S(q+31));
@@ -49,7 +50,9 @@ bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
         int3 top=int3(ga)+int3((gb-ga)*uv.x),bottom=int3(gd)+int3((gc-gd)*uv.x);
         rgb=clamp(rgb+top+int3((bottom-top)*uv.y)-16,0,31);
     }
-    uint3 bytes=(uint3(rgb)<<3)|(uint3(rgb)>>2);
+    // VDP2 palette entries expand five-bit channels with zero low bits;
+    // direct-colour GPU sprites use the existing full-range expansion.
+    uint3 bytes=(uint3(rgb)<<3)|((flags&0x1000000)?uint3(0,0,0):(uint3(rgb)>>2));
     color=bytes.r<<16|bytes.g<<8|bytes.b;return true;
 }
 float4 output_color(uint rgb){return float4(float3((rgb>>16)&255,(rgb>>8)&255,rgb&255)/255,1);}
@@ -175,7 +178,20 @@ float4 main(Input input):SV_Target {
         return (aa_pass&2)!=0?ray_shadow(input,base):base;
     }
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
-    uint p=S(4)+(cell.y*w+cell.x)*12,mode=S(p+3);
+    uint p=S(4)+(cell.y*w+cell.x)*12;
+    if(S(p+3)&0x100)return output_color(S(p));
+    uint tile=S(10);
+    uint bin=S(6)+(cell.y/tile*S(8)+cell.x/tile)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
+    int origin=int(S(9));int2 native_cell=int2(cell)-int2(origin,0);
+    float2 position=(float2(int2(pixel)-int2(origin*int(scale),0))+.5)/scale-.5;
+    [loop]for(uint i=count;i>0;--i) {
+        uint id=S(start+i-1),q=S(5)+id*40;
+        if(sample_quad(q,position,native_cell,color)) {
+            if(S(q+25)&0x1000000)p=S(q+34)+(cell.y*w+cell.x)*12;
+            found=true;break;
+        }
+    }
+    uint mode=S(p+3);
     if(mode&0x100)return output_color(S(p));
     uint native_color=S(p),absent=S(p+1),fixed=S(p+2),rotation=S(p+9),info=S(11);
     if(info!=0 && rotation!=0 && scale>1) {
@@ -198,14 +214,6 @@ float4 main(Input input):SV_Target {
             if(roles&4)fixed=(roles&8)?offset_color:enhanced;
         }
     }
-    uint tile=S(10);
-    uint bin=S(6)+(cell.y/tile*S(8)+cell.x/tile)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
-    int origin=int(S(9));int2 native_cell=int2(cell)-int2(origin,0);
-    float2 position=(float2(int2(pixel)-int2(origin*int(scale),0))+.5)/scale-.5;
-    [loop]for(uint i=count;i>0;--i) {
-        uint id=S(start+i-1),q=S(5)+id*40;
-        if(sample_quad(q,position,native_cell,color)){found=true;break;}
-    }
     if(!found)return output_color(S(p+8)!=0?absent:native_color);
     if(color&0x1000000)return output_color(absent);
     if(mode==0)return output_color(fixed);
@@ -215,6 +223,11 @@ float4 main(Input input):SV_Target {
         if(mode==2)c=(a*(31-ratio)+b*(ratio+1))>>5;
         if(mode==3 || mode==5)c=min(a+b,255);
         if(mode==4)c=(b*(31-ratio)+a*(ratio+1))>>5;
+        if(mode==6) {
+            uint below=(S(p+10)>>sh)&255;
+            uint mixed=((a>>2)+(below>>2))*2;
+            c=(b*(31-ratio)+mixed*(ratio+1))>>5;
+        }
         c=uint(clamp(int(c)+int(S(p+5+channel)),0,255));result|=c<<sh;
     }
     return output_color(result);

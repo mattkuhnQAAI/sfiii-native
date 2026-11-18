@@ -190,7 +190,7 @@ SDL_Texture* HdGpu::render(const Frame& frame,const HdAssets& assets) {
         std::unordered_map<const HdTexture*,Matches> matches;
         for(size_t i=0;i<count;++i) {
             auto at=quad_offset+i*32;const auto& q=frame.hd->quads[i];data[at+22]=UINT32_MAX;
-            if(!visible[i] || !q.gpu_eligible || !q.texture) continue;
+            if(!visible[i] || !q.gpu_eligible || (q.gpu_flags&0x1000000u) || !q.texture) continue;
             unsigned command=(q.gpu_flags>>16)&15;
             auto it=matches.try_emplace(q.texture.get()).first;
             auto*& a=it->second.asset[command];unsigned mask=1u<<command;

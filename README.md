@@ -2,7 +2,13 @@
 
 **Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
 
-## Latest release improvements — v0.9.1
+## Latest release improvements — v0.9.2
+
+- **Clearer save locations.** Choose and open the folder containing each game's ordinary saves and quick states; changing the folder does not move progress.
+- **Widescreen rendering improvements.** The GPU renderer handles more indexed sprites at the edges and improves selected color-composition cases. Game-side object culling and some effects remain limited.
+- **One more experimental Scenario 3 translation profile.** A newly patched v25.1 image reached the harbor transition that failed with an earlier damaged image. Its intro and selected routes were exercised; several comparisons against the earlier disc differ and broader gameplay remains unvalidated.
+
+## Previous improvements — v0.9.1
 
 - **More reliable loading and transitions.** Improved Saturn memory mirroring, native returns across overlay calls, and discovery of scene callbacks. CD status replies include the full drive status.
 - **Safer saves and state restoration.** Backup memory is flushed before replacement. Native states preserve overlay headers when saved between a load and the first call into the overlay.
@@ -16,20 +22,20 @@ See the [v0.9.1 release notes](docs/release-v0.9.1.md), [community PR review](do
 
 ## Downloads
 
-The latest release is [**v0.9.1**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
+The latest release is [**v0.9.2**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
 
 | Platform | Download | Validation scope |
 | --- | --- | --- |
-| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-win64.zip) | Fresh disc preparation, save import, and 16 gameplay routes across four editions, including native-state continuations. |
-| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
-| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.1/SFIII-Native-0.9.1-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
+| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-win64.zip) | Local Scenario 3 intro, harbor and selected gameplay routes; broader campaign and some changed-frame comparisons remain unvalidated. |
+| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
+| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
 | Optional Windows graphics builder | [Separate builder ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip) | Builds experimental artwork locally from your own discs. In-game artwork checks are strongest in Scenario 2; AI widescreen remains unsupported. |
 
 Checksums and platform validation summaries accompany the release. Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required by this runtime. Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
 ## Registered game editions
 
-v0.9.1 registers **13 exact-content profiles**, including seven experimental registrations. Disc identification was checked locally for the original six, and current Windows gameplay routes cover four editions. A filename or translation-version label alone does not establish compatibility.
+v0.9.2 registers **14 exact-content profiles**, including eight experimental registrations. Disc identification was checked locally for the original six and the new Scenario 3 variant. A filename or translation-version label alone does not establish compatibility.
 
 | Game and registered edition | Current Windows evidence |
 | --- | --- |
@@ -39,6 +45,7 @@ v0.9.1 registers **13 exact-content profiles**, including seven experimental reg
 | Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. Current producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
 | Scenario 2 — supplied V1.003 image, header reports V24 | Exact translation version unverified. Eight current routes include title, town/house, player saves, camera/battlefield and native-state continuations. Local high-resolution performance/audio comparisons also use this image. |
 | Scenario 3 — Translation Project v25.1 | Current title, recorded dream and fresh ship-introduction routes. Earlier first-battle/priest-interior evidence; broader battles and campaign transfers unvalidated. |
+| Scenario 3 — Translation Project v25.1, newly patched source variant | Experimental exact profile. Locally compiled and reached a recorded harbor transition; battle and intro comparisons against the earlier image have differences requiring further investigation. Other patch selections may have different identities. |
 | Scenario 2 — Translation Project v25.1 on V1.003 | Experimental exact profile from contributor PR #16. Contributor reports Linux audit/build/boot; this exact disc is unavailable in the maintainer suite. |
 | Scenario 2 — Translation Project v25.1 on V2.000 | Experimental exact profile from contributor PR #16, separate from the locally migrated image above. Local gameplay validation unavailable. |
 | Scenario 3 — Translation Project v25.1, Redump base | Experimental exact profile from contributor PR #16, separate from the previously supplied image. Local gameplay validation unavailable. |

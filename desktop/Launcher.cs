@@ -92,17 +92,17 @@ class Launcher : Form {
         ButtonAt(selectDisc,"Browse...",702,154,120,delegate {
             using(var d=new OpenFileDialog {Filter="Saturn disc image (*.cue;*.chd)|*.cue;*.chd",Title="Choose your own supported Saturn disc"}) if(d.ShowDialog(this)==DialogResult.OK) cue.Text=d.FileName;
         });
-        TextAt("Game-data folder",25,206,125,25);work.SetBounds(155,203,535,28);Controls.Add(work);
+        TextAt("Game and saves",25,206,125,25);work.SetBounds(155,203,535,28);Controls.Add(work);
         ButtonAt(selectWork,"Choose...",702,200,120,delegate {
-            using(var d=new FolderBrowserDialog {Description="Choose a writable folder outside the application and source repositories",SelectedPath=work.Text}) if(d.ShowDialog(this)==DialogResult.OK) {work.Text=d.SelectedPath;RefreshReady();}
+            using(var d=new FolderBrowserDialog {Description="Choose the folder for this game's saves, quick states and prepared files. Choosing a different folder does not move existing saves.",SelectedPath=work.Text}) if(d.ShowDialog(this)==DialogResult.OK) {work.Text=d.SelectedPath;RefreshReady();}
         });
-        TextAt("First preparation can take several minutes and needs several GB of free space.",25,246,795,25);
+        TextAt("Saves and quick states are stored in this folder. Changing folders does not move them.\nPreparation can take several minutes and needs several GB of free space.",25,239,795,40);
         state.SetBounds(25,281,795,25);Controls.Add(state);progress.SetBounds(25,312,795,14);Controls.Add(progress);
         ButtonAt(prepare,"Prepare game",25,346,140,Prepare);
         ButtonAt(play,"Play",175,346,80,Play);
         ButtonAt(controller,"Controller setup",265,346,155,delegate {LaunchControllerSetup();});
         ButtonAt(import,"Save manager",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
-        ButtonAt(openFolder,"Open data folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text));});
+        ButtonAt(openFolder,"Open save folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text)); else MessageBox.Show(this,"This folder does not exist yet. It will be created when you prepare the game.","Save folder");});
         ButtonAt(cancel,"Cancel",720,346,100,delegate {CancelWorker();});
         ButtonAt(graphics,"Optional graphics...",25,397,180,delegate {SelectGraphics();});
         ButtonAt(originalGraphics,"Use original graphics",215,397,200,delegate {RunGraphicsTool(null);});

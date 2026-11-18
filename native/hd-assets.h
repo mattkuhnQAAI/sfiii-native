@@ -184,7 +184,7 @@ public:
             const auto& quad=source.hd->quads[i];
             auto t=quad.texture;
             unsigned command=(quad.gpu_flags>>16)&15;
-            if(!visible[i+1] || !quad.gpu_eligible || command>2 || !t) continue;
+            if(!visible[i+1] || !quad.gpu_eligible || (quad.gpu_flags&0x1000000u) || command>2 || !t) continue;
             auto& bucket=matches[command];auto found=bucket.find(t.get());
             const Asset* asset=found==bucket.end() ? match(*t,command) : found->second;
             bucket[t.get()]=asset;materials[i+1]=asset;
