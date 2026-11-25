@@ -40,6 +40,9 @@ v0.9.2 registers **14 exact-content profiles**, including eight experimental reg
 | Game and registered edition | Windows evidence |
 | --- | --- |
 | Scenario 1 — USA MK-81383 V1.001, unpatched | v0.9.1 title and fresh-intro routes; older town/battle/transition checks. Full campaign unvalidated. |
+| Scenario 1 — USA MK-81383 V1.001, local variant | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Broader routes unvalidated. |
+| Scenario 2 — original Japanese GS-9188 V1.003 | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Gameplay routes unvalidated. |
+| Scenario 3 — original Japanese GS-9203 V1.001 | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Gameplay routes unvalidated. |
 | Scenario 1 — Translation Project v25.1 | v0.9.1 intro, original-save load and fresh-opening routes. Broader gameplay unvalidated. |
 | Scenario 2 — Translation Project v24 | v0.9.1 isolated producer checks for its BOOT family. Towns, battles, items/spells and snapshots were exercised on earlier builds; no complete campaign claim. |
 | Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. v0.9.1 producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |

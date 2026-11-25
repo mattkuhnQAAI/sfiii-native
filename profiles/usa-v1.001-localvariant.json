@@ -1,0 +1,359 @@
+{
+  "product": "MK-81383",
+  "version": "V1.001",
+  "track1_sha256": "7ba36416b94fb456c2c7e2cd3b8f36f82ff75d86fb2f2717fa033c607a21ef73",
+  "modules": [
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Scenario 1 X1ENDING at 0606027A passes destination 060A0000 in r5 and file ID 0x166 in r4 to BOOT 06012A14; the loaded entry is called at 060602CE. Static loader/call evidence; ending gameplay unexecuted."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06046000",
+      "seeds": [
+        "06046000"
+      ],
+      "overlay": true,
+      "evidence": "Verified USA V1.001 X001 at 060FD324 loads file ID 0x165 (disc directory X046.BIN) into r5=06046000 using the same loader as adjacent known modules and waits for completion. Header veneers and internal targets fit this image. Static loader evidence; this route has not been executed."
+    },
+    {
+      "name": "BOOT",
+      "file": "1ST.BIN",
+      "base": "06004000",
+      "seeds": [
+        "06004000",
+        "060108F8",
+        "0601F76C",
+        "06014888",
+        "0601366C",
+        "06015CAC",
+        "060149A0",
+        "06011368",
+        "060113A4",
+        "0600B610",
+        "06011D1C",
+        "0600B770",
+        "060091E4",
+        "06015CC0",
+        "060173D4",
+        "060173C8",
+        "0600BA78",
+        "0600B2C8",
+        "06008D68",
+        "060085D0",
+        "06008558",
+        "060086C0",
+        "060087BC",
+        "06017754",
+        "06017768",
+        "0601F870",
+        "06014284",
+        "0601F85A",
+        "0600B410",
+        "0600B400",
+        "0600E852",
+        "0600BCA0",
+        "0600BEC4",
+        "06008D28",
+        "0600BEE4",
+        "0600BF04",
+        "0600BE24",
+        "0600BE10",
+        "0600BDF8",
+        "060087EC",
+        "0600881C",
+        "06008844",
+        "060083FA",
+        "06011B68",
+        "0600BE30",
+        "0600B3F0",
+        "0601F874",
+        "0601F876",
+        "0600B754",
+        "0600E2C0",
+        "06008D88",
+        "0600BD68",
+        "0601F856"
+      ],
+      "evidence": "IP first-read; 060108F8 observed as indirect callback target in native boot trace; 0600BE30 observed in sessions/20261017-200314-869-d3013b with 64 matching RAM bytes.",
+      "stack_return_calls": [
+        "06004040",
+        "06004108",
+        "06004204"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
+    },
+    {
+      "name": "X002",
+      "file": "X002.BIN",
+      "base": "06028800",
+      "seeds": [
+        "06028878",
+        "060289B0"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact match in native WRAM-H snapshot; observed call to +0x78 trampoline"
+    },
+    {
+      "name": "X033",
+      "file": "X033.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06078000; native learning/run-0.log"
+    },
+    {
+      "name": "X003",
+      "file": "X003.BIN",
+      "base": "06034B00",
+      "seeds": [
+        "06034C74",
+        "06034B0C",
+        "06035000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06034C74; native learning/run-1.log"
+    },
+    {
+      "name": "X001",
+      "file": "X001.BIN",
+      "base": "060FD000",
+      "seeds": [
+        "060FD000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 060FD000; native learning/run-4.log"
+    },
+    {
+      "name": "X032",
+      "file": "X032.BIN",
+      "base": "06088000",
+      "bytes": "8200",
+      "seeds": [
+        "06088084",
+        "060880A8",
+        "060880CC",
+        "0608DACC"
+      ],
+      "overlay": true,
+      "evidence": "Native run-10 WRAM-H matches first 0x8200 bytes exactly; remainder differs. Prefix SHA256 fe32c81f8fde062a16e6d7109299b99f6fc646076738e8ca670d5a598603fece. Call to +0x84 observed; tail residency unproven.; 0608DACC observed in sessions/20261017-194325-110-9b1db8 fatal, 64 bytes exact in captured RAM."
+    },
+    {
+      "name": "X008",
+      "file": "X008.BIN",
+      "base": "06056000",
+      "seeds": [
+        "06056000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06056000; native learning/run-17.log"
+    },
+    {
+      "name": "X005",
+      "file": "X005.BIN",
+      "base": "0603DC00",
+      "seeds": [
+        "0603DD8C"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 0603DD8C; native learning/run-18.log"
+    },
+    {
+      "name": "X006",
+      "file": "X006.BIN",
+      "base": "06046000",
+      "seeds": [
+        "06046000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06046000; native learning/run-23.log"
+    },
+    {
+      "name": "X1OPMOV",
+      "file": "X1OPMOV.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 0605F000; native learning/run-29.log"
+    },
+    {
+      "name": "X009",
+      "file": "X009.BIN",
+      "base": "06035000",
+      "seeds": [
+        "06035000"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in before35000.bin immediately before call at 06035000; overlaps and replaces X003, call-probe.log"
+    },
+    {
+      "name": "X1DREAM",
+      "file": "X1DREAM.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06060A24"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06060A24; native learning/run-58.log"
+    },
+    {
+      "name": "X022",
+      "file": "X022.BIN",
+      "base": "06070000",
+      "seeds": [
+        "0607000C",
+        "06074ED8"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 0607000C; native learning/run-59.log; 06074ED8 observed in sessions/20261017-195634-559-11994a fatal, 64 target bytes match RAM."
+    },
+    {
+      "name": "X021",
+      "file": "X021.BIN",
+      "base": "06068000",
+      "seeds": [
+        "06068090"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06068090; native learning/run-65.log"
+    },
+    {
+      "name": "X1OP101",
+      "file": "X1OP101.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F4B8"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 0605F4B8; native learning/run-70.log"
+    },
+    {
+      "name": "X1OP102",
+      "file": "X1OP102.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06060068"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in WRAM-H and observed target 06060068; native learning/run-77.log"
+    },
+    {
+      "name": "X1OP103",
+      "file": "X1OP103.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "06061244"
+      ],
+      "overlay": true,
+      "evidence": "Whole file exact in sessions/20261017-201300-432-728fd3 crash RAM at first observed call 06061244"
+    },
+    {
+      "name": "X1SARA1",
+      "file": "X1SARA1.BIN",
+      "base": "0605F000",
+      "seeds": [
+        "0605F9FC"
+      ],
+      "overlay": true,
+      "evidence": "Whole 10960-byte file exactly matches crash WRAM-H at 0605F000; observed call 0605F9FC from 06056EE0 in sessions/20261017-211757-020-36f1f4 at VBlank 54710"
+    },
+    {
+      "name": "X017",
+      "file": "X017.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088264"
+      ],
+      "overlay": true,
+      "evidence": "Whole 27296-byte file exactly matches crash WRAM-H at 06088000; observed call 06088264 from 060571B4 at VBlank 56992 in sessions/20261017-212931-047-ff6984, replacing X032"
+    },
+    {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06056000",
+      "seeds": [
+        "06056000",
+        "0605600C",
+        "06056018",
+        "06056024",
+        "06056030",
+        "0605603C",
+        "06056048",
+        "06056054",
+        "06056060",
+        "0605606C",
+        "06056078",
+        "06056084",
+        "06056090",
+        "0605609C",
+        "060560A8",
+        "060560B4",
+        "060560C0",
+        "060560CC",
+        "060560D8",
+        "060560F0"
+      ],
+      "overlay": true,
+      "evidence": "USA V1.001: complete 34392-byte image exact-match at 06056000 in session 20261017-225336-461-d9a0dd; SHA256 9a9cbffaf07cd0694f6ede699cfa072deef595c3af6818512341d4d893c488ab; 20 validated export veneers. Crash entry discovered from exports without manual seed."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D800",
+        "0609D80C",
+        "0609D818",
+        "0609D824",
+        "0609D830",
+        "0609D83C",
+        "0609D848",
+        "0609D854",
+        "0609D860"
+      ],
+      "overlay": true,
+      "evidence": "USA V1.001: complete 9348-byte exact image at 0609D800 in crash RAM session 20261017-225336-461-d9a0dd; SHA256 cb5a60489f6cfbd84369f12ac71e61f44cefa7c9247c686a9bde9c36fa01d4e8; validated export veneers."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100",
+        "060C010C",
+        "060C0118",
+        "060C0124"
+      ],
+      "overlay": true,
+      "evidence": "USA V1.001: complete 29316-byte exact image at 060C0100 in crash RAM session 20261017-225336-461-d9a0dd; SHA256 3fdf4a4997a07ffcc7c91fb0fe8b20b83ecd43782fdc390f32cce63a89fc89a8; validated export veneers."
+    },
+    {
+      "name": "X3HEAL",
+      "file": "X3HEAL.BIN",
+      "base": "0604A800",
+      "seeds": [
+        "0604A800",
+        "0604A80C",
+        "0604A818"
+      ],
+      "overlay": true,
+      "evidence": "Whole 11916-byte image exact match at 0604A800 in a local whole-image RAM comparison; fatal call to base; X014 effect-loader literals corroborate destination."
+    }
+  ],
+  "id": "scenario1-usa-v1_001-localvariant",
+  "title": "Scenario 1 USA (unpatched V1.001, local variant)",
+  "scenario": 1,
+  "scene_base": "0605F000",
+  "content_sha256": "2fcf8257f7b9f8b25049ce52e8b5c3305fa2f55097f835cc1674f01301a4359f"
+}
