@@ -108,3 +108,6 @@ __pycache__/
 *.log
 *.zip
 *.7z
+!/profiles/usa-v1.001-localvariant.json
+!/profiles/scenario2-original-v1_003.json
+!/profiles/scenario3-original-v1_001.json

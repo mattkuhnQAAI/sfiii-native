@@ -1,6 +1,20 @@
 # Shining Force III Recomp — Scenarios 1, 2 & 3
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
+
+## New in this fork
+
+This fork adds quality-of-life features on top of upstream v0.9.2:
+
+- **Achievements.** A rcheevos-based achievement runtime (`achievements.json`, evaluated each VBlank over work RAM) plus **RecompAchievements** reporting to RecompLauncher (no-op without it). Locked-out during `--input`/`--write`/`--cheat`/save-state runs.
+- **Cheats with a menu.** A launcher **Cheats** panel with a curated per-scenario database (Scenario 1/2/3: money, leader stats, infinite HP/MP, full force), disc auto-detection (IP.BIN product/version), filter, enable/disable all, and add/clear. Cheats apply once per VBlank while their module is active (`--cheat MODULE:ADDR=HEX`).
+- **Expanded launcher menu.** Panels for **Achievements, Saves/States, Accessibility, Quality of life, Theme/UI, Mods/Patches, and Debug**, with settings persisted in `settings.ini`.
+- **RecompLauncher support.** `recomplauncher.json` (+ `.sc2.json`/`.sc3.json`) with Easy Setup, settings, saves and verified `dumps`; a `--data <path>` option (and `RECOMPLAUNCHER_DATA`) so settings/saves live under the launcher's data folder. `.chd` is detected with a clear message (extraction to `.cue/.bin` required).
+- **Native on Windows and Linux** (and macOS); the features above live in the shared runtime.
+
+See [RecompLauncher](https://recomplauncher.com) and [RecompAchievements](https://github.com/elripalda/RecompAchievements).
 
 ## Latest release improvements — v0.9.2
 
@@ -18,20 +32,22 @@
 
 The display options introduced in v0.9.0 remain available, including 9× rendering, four-sample supersampling, five scaling filters, vertex precision, and sharper supported backgrounds. **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
 
-See the [v0.9.2 release notes](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2), [v0.9.1 notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
+See the [fork-0.9.2 release notes](https://github.com/docerol/sfiii-recomp/releases/tag/fork-0.9.2), [v0.9.1 notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
 
 ## Downloads
 
-The latest release is [**v0.9.2**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
+The latest fork release is [**fork-0.9.2**](https://github.com/docerol/sfiii-recomp/releases/tag/fork-0.9.2). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands.
 
 | Platform | Download | Validation scope |
 | --- | --- | --- |
-| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-win64.zip) | Local Scenario 3 intro, harbor and selected gameplay routes; broader campaign and some changed-frame comparisons remain unvalidated. |
-| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
-| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
-| Optional Windows graphics builder | [Separate builder ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip) | Builds experimental artwork locally from your own discs. In-game artwork checks are strongest in Scenario 2; AI widescreen remains unsupported. |
+| Linux x86-64 — all scenarios (menu) | [All-scenarios archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-all/SFIII-Recomp-0.9.2-All-Linux-x64.tar.gz) | One package with a `play.sh` scenario menu; includes GPU shaders. |
+| Linux x86-64 — Scenario 1 (USA) | [SC1 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2/SFIII-Recomp-0.9.2-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
+| Linux x86-64 — Scenario 2 (JP) | [SC2 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-sc2/SFIII-Recomp-0.9.2-Sc2-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
+| Linux x86-64 — Scenario 3 (JP) | [SC3 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-sc3/SFIII-Recomp-0.9.2-Sc3-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
+| Windows 10/11 x64 | Coming soon (build via CI / `build-scenario1.ps1`) | — |
+| Apple Silicon macOS 13+ | Coming soon (CI `portable.yml`) | — |
 
-Checksums and platform validation summaries accompany the release. Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required by this runtime. Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
+Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required. Use your own disc image (`.cue/.bin`).
 
 ## Registered game editions
 
@@ -40,6 +56,9 @@ v0.9.2 registers **14 exact-content profiles**, including eight experimental reg
 | Game and registered edition | Windows evidence |
 | --- | --- |
 | Scenario 1 — USA MK-81383 V1.001, unpatched | v0.9.1 title and fresh-intro routes; older town/battle/transition checks. Full campaign unvalidated. |
+| Scenario 1 — USA MK-81383 V1.001, local variant | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Broader routes unvalidated. |
+| Scenario 2 — original Japanese GS-9188 V1.003 | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Gameplay routes unvalidated. |
+| Scenario 3 — original Japanese GS-9203 V1.001 | Experimental exact profile added from a local disc; boot and module activation validated on Linux. Gameplay routes unvalidated. |
 | Scenario 1 — Translation Project v25.1 | v0.9.1 intro, original-save load and fresh-opening routes. Broader gameplay unvalidated. |
 | Scenario 2 — Translation Project v24 | v0.9.1 isolated producer checks for its BOOT family. Towns, battles, items/spells and snapshots were exercised on earlier builds; no complete campaign claim. |
 | Scenario 2 — v25.1 migrated from the registered v24 image | Experimental exact locally migrated image. v0.9.1 producer-family checks; limited intro/save/transition evidence on earlier builds. This does not establish every v25.1 variant or original-Saturn compatibility. |
@@ -81,19 +100,19 @@ When generation finishes, use **Attach packs to game** in the builder or **Optio
 
 These older Windows captures illustrate actual native rendering and optional artwork. They do not establish new-platform gameplay compatibility or show every v0.9.0 feature. Images are release documentation, not downloadable asset packs.
 
-[![Airo village: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)
+[![Airo village: Original, Animated, Illustrated and General](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/airo-ai-options.png)
 
-[![Battle formation: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)
+[![Battle formation: Original, Animated, Illustrated and General](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/battle-ai-options.png)
 
 | Scenario 1 USA title | Scenario 2 translated title |
 | --- | --- |
-| ![Scenario 1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | ![Scenario 2](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
+| ![Scenario 1](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | ![Scenario 2](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
 
 | 2× rendering | 5× rendering |
 | --- | --- |
-| ![2x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | ![5x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
+| ![2x](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | ![5x](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
 
-![Experimental original-graphics widescreen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
+![Experimental original-graphics widescreen](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
 
 ## Status and validation
 

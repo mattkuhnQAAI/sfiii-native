@@ -1,0 +1,228 @@
+{
+  "id": "scenario2-original-v1_003",
+  "title": "Scenario 2 (original Japanese V1.003, experimental)",
+  "scenario": 2,
+  "product": "GS-9188",
+  "version": "V1.003",
+  "content_sha256": "5f2310de8d643e475dad62b25f7cd1859a713695a582fa3b541fe07196f3740a",
+  "scene_base": "0605E000",
+  "effect_base": "06049000",
+  "effect_mapping_evidence": "V1.003 destination is a hypothesis inherited from the V2.000 loader family. Verify export veneers and actual loads separately; no V2.000 caller addresses are asserted for this revision.",
+  "model_bases": {
+    "X011": "06068000",
+    "X012": "06070000",
+    "X013": "06080000",
+    "X014": "06088000",
+    "X016": "06088000",
+    "X017": "06088000",
+    "X018": "06088000",
+    "X019": "060A0000",
+    "X021": "06068000",
+    "X023": "06078000",
+    "X026": "06078000",
+    "X027": "06078000",
+    "X032": "06088000",
+    "X033": "06078000",
+    "X035": "06088000",
+    "X044": "06078000",
+    "X002": "0602A000",
+    "X005": "0603C100",
+    "X031": "0604C800",
+    "X024": "0028C000"
+  },
+  "modules": [
+    {
+      "name": "X025",
+      "file": "X025.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X048",
+      "file": "X048.BIN",
+      "base": "06049000",
+      "seeds": [
+        "06049000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06060000",
+      "seeds": [
+        "06060000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "BOOT",
+      "file": "1ST.BIN",
+      "base": "06004000",
+      "seeds": [
+        "06004000",
+        "06009906",
+        "06009A64",
+        "06009ADC",
+        "06009BCC",
+        "06009CC8",
+        "06009CF8",
+        "0600A234",
+        "0600A274",
+        "0600A294",
+        "0600A6F0",
+        "0600C7D4",
+        "0600C8FC",
+        "0600C90C",
+        "0600C91C",
+        "0600CB1C",
+        "0600CC60",
+        "0600CD5C",
+        "0600CF84",
+        "0600D04C",
+        "0600D108",
+        "0600D114",
+        "0600D1A8",
+        "0600E670",
+        "0600EC02",
+        "06010708",
+        "0601074C",
+        "0601349C",
+        "060147D0",
+        "06015A6E",
+        "06015FEC",
+        "06020C24"
+      ],
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently.",
+      "stack_return_calls": [
+        "06005548",
+        "06005610",
+        "0600570C"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
+    },
+    {
+      "name": "X003",
+      "file": "X003.BIN",
+      "base": "06036000",
+      "seeds": [
+        "06036174"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X001",
+      "file": "X001.BIN",
+      "base": "060FD000",
+      "seeds": [
+        "060FD000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X032",
+      "file": "X032.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088084"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently.",
+      "bytes": "8200"
+    },
+    {
+      "name": "X008",
+      "file": "X008.BIN",
+      "base": "06054800",
+      "seeds": [
+        "06054800"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06054800",
+      "seeds": [
+        "06054800"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X006",
+      "file": "X006.BIN",
+      "base": "06044800",
+      "seeds": [
+        "06044800"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X009",
+      "file": "X009.BIN",
+      "base": "06036000",
+      "seeds": [
+        "06036000"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X022",
+      "file": "X022.BIN",
+      "base": "06070000",
+      "seeds": [
+        "0607000C"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D800"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100"
+      ],
+      "overlay": true,
+      "evidence": "Inherited load-address hypothesis from V2.000 profile; export veneers and native routes must corroborate this V1.003 revision independently."
+    }
+  ],
+  "support": "Experimental supplied V1.003 image; header V24, exact translation version unverified. Native intro, current-save Airo church and town-house routes tested; battle route unavailable for this revision. X004/X019/X3ELEM5 and the unaligned BOOT seed remain static reviews.",
+  "boot_check_vblanks": 1800,
+  "inherited_entry_review": [
+    "The V2.000 BOOT seed 06016C74 could not be safely aligned by a unique instruction anchor. Its V1.003 equivalent remains a separate static review; an old absolute address was not copied as a substitute."
+  ],
+  "track1_sha256": "cf5a3052f4370e654c9a1bd7f944615c72f085c37ba009846aa6c744f8a26767"
+}

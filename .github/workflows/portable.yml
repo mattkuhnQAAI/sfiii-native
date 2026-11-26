@@ -90,6 +90,12 @@ jobs:
         run: python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
       - name: Build self-contained candidate
         run: python -B tools/package-posix.py --out "$RUNNER_TEMP/sfiii-package" --cache "$RUNNER_TEMP/sfiii-cache" --shaders "$RUNNER_TEMP/sfiii-shaders"
+      - name: Add RecompLauncher manifest
+        shell: bash
+        run: |
+          PACKAGE=$(cat "$RUNNER_TEMP/sfiii-package/package-path.txt")
+          cp recomplauncher.json "$PACKAGE/recomplauncher.json"
+          echo "Added recomplauncher.json to $PACKAGE"
       - name: Synthetic native validation
         shell: bash
         run: |

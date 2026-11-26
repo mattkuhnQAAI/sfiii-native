@@ -23,7 +23,10 @@ def snapshot(path,identity):
 
 class PortableTests(unittest.TestCase):
     def test_scenario3_selector_requires_its_own_ready_profile(self):
-        import launcher_posix as launcher
+        try:
+            import launcher_posix as launcher
+        except ImportError as exc:
+            self.skipTest('launcher_posix unavailable: %s' % exc)
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);data=root/'game';data.mkdir();payload=root/'payload';payload.mkdir()
             (payload/'package.json').write_text(json.dumps({'build_id':'synthetic-package'}))
