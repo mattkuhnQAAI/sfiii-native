@@ -40,7 +40,10 @@ The latest fork release is [**fork-0.9.2**](https://github.com/docerol/sfiii-rec
 
 | Platform | Download | Validation scope |
 | --- | --- | --- |
-| Linux x86-64 | [Linux archive (with GPU shaders)](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2/SFIII-Recomp-0.9.2-Linux-x64.tar.gz) | Native build with the fork features (achievements, cheats menu, RecompLauncher); synthetic + headless boot validated; real-disc gameplay on GPU unvalidated here. |
+| Linux x86-64 — all scenarios (menu) | [All-scenarios archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-all/SFIII-Recomp-0.9.2-All-Linux-x64.tar.gz) | One package with a `play.sh` scenario menu; includes GPU shaders. |
+| Linux x86-64 — Scenario 1 (USA) | [SC1 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2/SFIII-Recomp-0.9.2-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
+| Linux x86-64 — Scenario 2 (JP) | [SC2 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-sc2/SFIII-Recomp-0.9.2-Sc2-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
+| Linux x86-64 — Scenario 3 (JP) | [SC3 archive](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2-sc3/SFIII-Recomp-0.9.2-Sc3-Linux-x64.tar.gz) | Fork features; synthetic + headless boot validated. |
 | Windows 10/11 x64 | Coming soon (build via CI / `build-scenario1.ps1`) | — |
 | Apple Silicon macOS 13+ | Coming soon (CI `portable.yml`) | — |
 
