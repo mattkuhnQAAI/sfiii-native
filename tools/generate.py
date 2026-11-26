@@ -1,5 +1,6 @@
 """Generate local game code from an evidence-based module profile."""
 import argparse
+import inspect
 import json
 from pathlib import Path
 import sys
@@ -7,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries, vertex_producer_hooks
 from disc_profile import verify_inventory
 from module_images import expand_modules, verified_source, image_bytes
+from achievements import load as load_achievements
 
 p = argparse.ArgumentParser(__doc__)
 p.add_argument('--framework', choices=['saturnkit', 'saturn-recomp'], required=True)
@@ -21,6 +23,10 @@ out = (a.out or work / ('recomp-saturnkit' if a.framework == 'saturnkit' else 'r
 if work == repo or repo in work.parents or out == repo or repo in out.parents:
     raise SystemExit('Game-derived output must be outside the repository')
 profile = json.loads(a.profile.read_text())
+achievements, title = [], profile.get('title', '')
+if profile.get('achievements'):
+    ref = Path(profile['achievements'])
+    achievements = load_achievements(ref if ref.is_absolute() else repo / ref)
 scene_rule = None
 if a.framework == 'saturn-recomp':
     sys.path.insert(0, str(repo / '.local' / 'saturn-recomp' / 'src'))
@@ -78,7 +84,10 @@ if a.framework == 'saturnkit':
 else:
     sys.path.insert(0, str(repo / '.local' / 'saturn-recomp' / 'src'))
     from saturnrecomp.recomp.__main__ import generate
+    extra = {name: value for name, value in (('achievements', achievements), ('title', title))
+             if name in inspect.signature(generate).parameters}
     generate(specs, str(out), callable_entries=overlays,
              hooks=presentation_hooks,
              runtime_literals={m['name'] for m in modules}, optest=a.optest, native_states=True,
-             stack_return_calls={m['name']:{int(pc,16) for pc in m.get('stack_return_calls',[])} for m in modules})
+             stack_return_calls={m['name']:{int(pc,16) for pc in m.get('stack_return_calls',[])} for m in modules},
+             **extra)

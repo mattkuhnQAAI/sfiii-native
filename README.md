@@ -1,6 +1,20 @@
 # Shining Force III Recomp — Scenarios 1, 2 & 3
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**. It supports the original USA Scenario 1 and selected translated editions of Scenarios 1–3 through exact-content disc profiles. The application generates C++ from your own disc's SH-2 code and compiles it locally using bundled tools. The runtime supplies Saturn graphics, sound, storage and other hardware services. This is a static recompilation, rather than a byte-matching source decompilation.
+
+## New in this fork
+
+This fork adds quality-of-life features on top of upstream v0.9.2:
+
+- **Achievements.** A rcheevos-based achievement runtime (`achievements.json`, evaluated each VBlank over work RAM) plus **RecompAchievements** reporting to RecompLauncher (no-op without it). Locked-out during `--input`/`--write`/`--cheat`/save-state runs.
+- **Cheats with a menu.** A launcher **Cheats** panel with a curated per-scenario database (Scenario 1/2/3: money, leader stats, infinite HP/MP, full force), disc auto-detection (IP.BIN product/version), filter, enable/disable all, and add/clear. Cheats apply once per VBlank while their module is active (`--cheat MODULE:ADDR=HEX`).
+- **Expanded launcher menu.** Panels for **Achievements, Saves/States, Accessibility, Quality of life, Theme/UI, Mods/Patches, and Debug**, with settings persisted in `settings.ini`.
+- **RecompLauncher support.** `recomplauncher.json` (+ `.sc2.json`/`.sc3.json`) with Easy Setup, settings, saves and verified `dumps`; a `--data <path>` option (and `RECOMPLAUNCHER_DATA`) so settings/saves live under the launcher's data folder. `.chd` is detected with a clear message (extraction to `.cue/.bin` required).
+- **Native on Windows and Linux** (and macOS); the features above live in the shared runtime.
+
+See [RecompLauncher](https://recomplauncher.com) and [RecompAchievements](https://github.com/elripalda/RecompAchievements).
 
 ## Latest release improvements — v0.9.2
 

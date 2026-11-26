@@ -1,0 +1,53 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Shining Force III Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your Shining Force III Scenario 1 disc image (.cue/.bin), USA release (MK-81383).",
+      "formats": [{ "type": "file" }],
+      "check": { "iso9660": "IP.BIN" },
+      "dumps": [
+        { "name": "Shining Force III Scenario 1 (USA) MK-81383", "size": 248107776, "crc32": "193BC6D2" }
+      ]
+    }
+  ],
+  "start": {
+    "program": ["saturn", "saturn.exe"],
+    "args": ["--data", "{data}", "--cue", "{input:game}"]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{data}/saturn-recomp/settings.ini" }],
+      "new": { "display.aspect": "4:3", "audio.volume": "100" }
+    }
+  ],
+  "settings": [
+    {
+      "id": "aspect",
+      "label": "Aspect ratio",
+      "help": "16:9 is widescreen; 4:3 is the original.",
+      "choices": [
+        { "label": "4:3", "set": { "display.aspect": "4:3" } },
+        { "label": "16:9", "set": { "display.aspect": "16:9" } }
+      ],
+      "defaults": { "display.aspect": "4:3" }
+    },
+    {
+      "id": "scale",
+      "label": "Internal resolution",
+      "slider": { "key": "display.internal_scale", "min": 1, "max": 4, "step": 1, "format": "%d" },
+      "defaults": { "display.internal_scale": "1" }
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "slider": { "key": "audio.volume", "min": 0, "max": 100, "step": 5, "format": "%d" },
+      "defaults": { "audio.volume": "100" }
+    }
+  ],
+  "saves": ["{data}"]
+}

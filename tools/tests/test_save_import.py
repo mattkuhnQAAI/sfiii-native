@@ -128,4 +128,70 @@ class ImportTests(unittest.TestCase):
             self.assertEqual(backup.read_bytes(),previous)
 
 
+    def native_record(self, name, payload, comment=b'Test', language=1, date_minutes=0):
+        head = name.encode().ljust(12, b'\0') + comment.ljust(11, b'\0') + bytes([language]) + struct.pack('<II', date_minutes, len(payload))
+        return head + payload
+
+    def bup_file(self, root, name, payload, comment=b'Test', language=1, date_minutes=0):
+        path = root / (name + '.BUP')
+        path.write_bytes(module.bup_bytes(self.native_record(name, payload, comment, language, date_minutes)))
+        return path
+
+    def test_bup_import_preserves_payload_and_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inner = b'\x03' + bytes(12895)
+            payload = (12896).to_bytes(4, 'big') + sum(inner).to_bytes(4, 'big') + inner
+            date_minutes = int((datetime.datetime(2026, 10, 20, 13, 52) - datetime.datetime(1980, 1, 1)).total_seconds() // 60)
+            path = self.bup_file(root, 'SFORCE31_07', payload, comment=b'Julian', language=2, date_minutes=date_minutes)
+            backup = root / 'backup.bin'
+            module.import_files(backup, 'cartridge', [path])
+            record = module.records(Path(str(backup) + '.cartridge').read_bytes())['SFORCE31_07']
+            self.assertEqual(record[32:], payload)
+            self.assertEqual(record[:12], b'SFORCE31_07\0')
+            self.assertEqual(record[12:23], b'Julian\0\0\0\0\0')
+            self.assertEqual(record[23], 2)
+            self.assertEqual(struct.unpack_from('<II', record, 24), (date_minutes, len(payload)))
+
+    def test_bup_export_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = (16240).to_bytes(4, 'big') + (7).to_bytes(4, 'big') + b'\x07' + bytes(16239)
+            raw = root / 'SFORCE32_05.BIN'
+            raw.write_bytes(data)
+            backup = root / 'backup.bin'
+            module.import_files(backup, 'cartridge', [raw])
+            result = module.export_files(backup, 'cartridge', root / 'out', bup=True)
+            exported = Path(result['exported'][0]['path'])
+            self.assertTrue(exported.name.endswith('.BUP'))
+            name, payload, metadata = module.bup_record(exported)
+            self.assertEqual((name, payload), ('SFORCE32_05', data))
+            again = root / 'again.bin'
+            module.import_files(again, 'cartridge', [exported])
+            self.assertEqual(module.records(Path(str(again) + '.cartridge').read_bytes())['SFORCE32_05'][32:], data)
+            with self.assertRaisesRegex(ValueError, 'already exists'):
+                module.export_files(backup, 'cartridge', root / 'out', bup=True)
+
+    def test_bup_rejects_bad_magic_and_truncation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good = self.bup_file(root, 'SFORCE33_01', bytes(24344))
+            bad = root / 'bad.BUP'
+            bad.write_bytes(b'XXXX' + good.read_bytes()[4:])
+            with self.assertRaisesRegex(ValueError, 'Vmem BUP'):
+                module.bup_record(bad)
+            short = root / 'short.BUP'
+            short.write_bytes(good.read_bytes()[:10])
+            with self.assertRaisesRegex(ValueError, 'Truncated BUP'):
+                module.bup_record(short)
+            with self.assertRaises(ValueError):
+                module.raw_record(bad)
+
+    def test_bup_date_roundtrips_through_minutes(self):
+        for stamp in (datetime.datetime(1980, 1, 1), datetime.datetime(1999, 12, 31, 23, 59),
+                      datetime.datetime(2026, 10, 20, 13, 52), datetime.datetime(2107, 1, 1)):
+            minutes = int((stamp - datetime.datetime(1980, 1, 1)).total_seconds() // 60)
+            self.assertEqual(module.bup_date_to_minutes(module.minutes_to_bup_date(minutes)), minutes)
+
+
 if __name__ == '__main__': unittest.main()
