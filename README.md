@@ -32,20 +32,19 @@ See [RecompLauncher](https://recomplauncher.com) and [RecompAchievements](https:
 
 The display options introduced in v0.9.0 remain available, including 9× rendering, four-sample supersampling, five scaling filters, vertex precision, and sharper supported backgrounds. **Use original graphics (AI graphics Off) with 16:9.** Optional AI artwork can misalign or pop in widescreen.
 
-See the [v0.9.2 release notes](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2), [v0.9.1 notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
+See the [fork-0.9.2 release notes](https://github.com/docerol/sfiii-recomp/releases/tag/fork-0.9.2), [v0.9.1 notes](docs/release-v0.9.1.md), [community PR review](docs/pr-review-2026-11.md), and [display controls](docs/USAGE.md#display).
 
 ## Downloads
 
-The latest release is [**v0.9.2**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.2). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands; **Prepare game** uses the bundled tools.
+The latest fork release is [**fork-0.9.2**](https://github.com/docerol/sfiii-recomp/releases/tag/fork-0.9.2). Extract the complete application archive. Players do not install a compiler, Python, Homebrew or Xcode, or enter compilation commands.
 
 | Platform | Download | Validation scope |
 | --- | --- | --- |
-| Windows 10/11 x64 | [Windows application ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-win64.zip) | Local Scenario 3 intro, harbor and selected gameplay routes; broader campaign and some changed-frame comparisons remain unvalidated. |
-| Linux x86-64 | [Linux archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-linux-x86_64.tar.gz) | Hosted native build and synthetic validation; real-disc gameplay and physical-device behavior remain unvalidated. |
-| Apple Silicon macOS 13+ | [Apple Silicon app archive](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.2/SFIII-Native-0.9.2-darwin-aarch64.tar.gz) | Hosted ARM64 build and synthetic validation; real-disc gameplay, physical controllers and hardware audio remain unvalidated. Ad-hoc signed, not Apple-notarized. |
-| Optional Windows graphics builder | [Separate builder ZIP](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip) | Builds experimental artwork locally from your own discs. In-game artwork checks are strongest in Scenario 2; AI widescreen remains unsupported. |
+| Linux x86-64 | [Linux archive (with GPU shaders)](https://github.com/docerol/sfiii-recomp/releases/download/fork-0.9.2/SFIII-Recomp-0.9.2-Linux-x64.tar.gz) | Native build with the fork features (achievements, cheats menu, RecompLauncher); synthetic + headless boot validated; real-disc gameplay on GPU unvalidated here. |
+| Windows 10/11 x64 | Coming soon (build via CI / `build-scenario1.ps1`) | — |
+| Apple Silicon macOS 13+ | Coming soon (CI `portable.yml`) | — |
 
-Checksums and platform validation summaries accompany the release. Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required by this runtime. Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
+Builds contain **no disc images, BIOS, extracted assets, generated game programs, artwork packs or saves**. No BIOS is required. Use your own disc image (`.cue/.bin`).
 
 ## Registered game editions
 
@@ -98,19 +97,19 @@ When generation finishes, use **Attach packs to game** in the builder or **Optio
 
 These older Windows captures illustrate actual native rendering and optional artwork. They do not establish new-platform gameplay compatibility or show every v0.9.0 feature. Images are release documentation, not downloadable asset packs.
 
-[![Airo village: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/airo-ai-options.png)
+[![Airo village: Original, Animated, Illustrated and General](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/airo-ai-options.png)](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/airo-ai-options.png)
 
-[![Battle formation: Original, Animated, Illustrated and General](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/battle-ai-options.png)
+[![Battle formation: Original, Animated, Illustrated and General](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/battle-ai-options.png)](https://github.com/docerol/sfiii-recomp/releases/download/v0.6.0-preview1/battle-ai-options.png)
 
 | Scenario 1 USA title | Scenario 2 translated title |
 | --- | --- |
-| ![Scenario 1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | ![Scenario 2](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
+| ![Scenario 1](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | ![Scenario 2](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
 
 | 2× rendering | 5× rendering |
 | --- | --- |
-| ![2x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | ![5x](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
+| ![2x](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | ![5x](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
 
-![Experimental original-graphics widescreen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
+![Experimental original-graphics widescreen](https://github.com/docerol/sfiii-recomp/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
 
 ## Status and validation
 
